@@ -337,6 +337,7 @@
     const others = categoryIds(cat).filter((id) => id !== a.id).map((id) => S.ach.get(id)).filter(Boolean);
     if (!others.length) { el.innerHTML = ''; return; }
     const meta = isMeta(a);
+    const inf0 = Progress.info(a, S.progress.get(a.id));
     const rows = others.map((oa) => ({ oa, inf: Progress.info(oa, S.progress.get(oa.id)) }))
       .sort((x, y) => x.inf.finished - y.inf.finished);
     const openCount = rows.filter((r) => !r.inf.finished).length;
@@ -348,7 +349,11 @@
     el.innerHTML = meta
       ? `<h2>Zählt für diesen Meta-Erfolg ${S.account ? `<span class="pill warn">${openCount} offen</span>` : ''}</h2>
          <p class="muted">„${esc(a.name)}“ bekommst du, indem du Erfolge aus der Kategorie „${esc(cat.name)}“ abschließt.
-           Offene stehen oben – tippe einen an für dessen Run-Through.</p>${list}`
+           Offene stehen oben – tippe einen an für dessen Run-Through.</p>
+         ${S.account ? `<p><span class="pill ok">✔ ${rows.length - openCount} erledigt</span> <span class="pill warn">○ ${openCount} offen</span>
+           ${inf0.maxCount ? `<span class="pill">benötigt: ${inf0.maxCount}</span>` : ''}</p>` : ''}
+         ${list}
+         <p class="muted">Hinweis: Nicht immer zählt jeder Erfolg der Kategorie für den Meta – Details im Wiki-Guide unten.</p>`
       : `<details><summary>Weitere Erfolge in „${esc(cat.name)}“ (${others.length}${S.account ? `, ${openCount} offen` : ''})</summary>${list}</details>`;
   }
 
