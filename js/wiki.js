@@ -184,5 +184,31 @@ const Wiki = (() => {
     }
   }
 
-  return { base, pageUrl, searchUrl, findPage, parse, page, sanitize, acquisition, fullImageUrl };
+  // Echte Kartensymbole aus „Category:Map icons“ (Dateinamen werden nicht fest verdrahtet,
+  // sondern aus der Kategorie ausgewählt). Ergebnis: { waypoint, landmark, vista } -> Bild-URL
+  async function mapIcons() {
+    const pages = [];
+    let cont = {};
+    for (let i = 0; i < 5; i++) {
+      const j = await api('en', {
+        action: 'query', generator: 'categorymembers', gcmtitle: 'Category:Map icons', gcmtype: 'file',
+        gcmlimit: '500', prop: 'imageinfo', iiprop: 'url', ...cont,
+      });
+      pages.push(...(j.query?.pages || []));
+      if (!j.continue) break;
+      cont = j.continue;
+    }
+    const files = pages.map((p) => ({ title: p.title.replace(/^File:/, ''), url: p.imageinfo?.[0]?.url })).filter((f) => f.url);
+    const BAD = /undiscovered|unexplored|incomplete|contested|locked|hollow|unavailable|disabled|inactive|grey|gray|small|old|beta/i;
+    const pick = (re) => files
+      .filter((f) => re.test(f.title) && !BAD.test(f.title))
+      .sort((a, b) => (/\(map icon\)\.png$/i.test(b.title) - /\(map icon\)\.png$/i.test(a.title)) || a.title.length - b.title.length)[0]?.url;
+    return {
+      waypoint: pick(/^waypoint\b/i),
+      landmark: pick(/^point of interest\b/i),
+      vista: pick(/^vista\b/i),
+    };
+  }
+
+  return { base, pageUrl, searchUrl, findPage, parse, page, sanitize, acquisition, fullImageUrl, mapIcons };
 })();

@@ -1090,7 +1090,26 @@
     else showSearch();
   }
 
+  // Echte Kartensymbole aus dem Wiki laden; nur übernehmen, wenn das Bild wirklich lädt
+  // (sonst bleiben die gezeichneten Ersatzsymbole aus dem CSS).
+  async function loadMapIcons() {
+    let icons = Store.get('mapIcons', null);
+    if (!icons || Date.now() - icons.ts > 30 * 24 * 3600 * 1000) {
+      try {
+        icons = { ts: Date.now(), urls: await Wiki.mapIcons() };
+        Store.set('mapIcons', icons);
+      } catch (e) { console.warn('Kartensymbole', e); return; }
+    }
+    for (const [kind, url] of Object.entries(icons.urls || {})) {
+      if (!url) continue;
+      const img = new Image();
+      img.onload = () => document.documentElement.style.setProperty(`--ic-${kind}`, `url("${url}")`);
+      img.src = url;
+    }
+  }
+
   async function init() {
+    loadMapIcons();
     try {
       await loadStatic();
     } catch (e) {
