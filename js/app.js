@@ -283,6 +283,7 @@
         </div>
       </header>
       <section id="todo" class="todo"><h2>What you still need to do</h2><p class="muted">Loading…</p></section>
+      <section id="places"></section>
       <details id="done-box" class="box" hidden><summary></summary><div id="done-body"></div></details>
       <details id="guide-box" class="box"><summary>📖 Full wiki guide</summary><div id="guide"><p class="muted">Loading wiki page…</p></div></details>
       <details id="more-box" class="box"><summary>ℹ️ Details: description, rewards, tiers</summary>
@@ -327,6 +328,7 @@
       if (token !== S.viewToken) return;
       renderTodo(a, inf, names, content, wikiNames);
       renderGuide(content, wiki.title, section ? wikiName : null);
+      renderPlaces(a, inf, names, content, wikiNames, wiki.title, token);
     } catch (e) {
       if (token !== S.viewToken) return;
       $('#guide').innerHTML = `<p class="muted">No matching wiki page found (${esc(e.message)}).
@@ -392,6 +394,66 @@
       return t.outerHTML;
     }
     return best.innerHTML;
+  }
+
+  // ---------- Orte & Wegmarken ----------
+  const chatBtn = (code) => (code ? `<button type="button" class="chatlink" data-code="${esc(code)}" title="Copy and paste into the in-game chat">${esc(code)}</button>` : '');
+
+  // „📍 Nearest waypoint: X [&…]“ zu einem gefundenen Ort
+  function waypointLine(place) {
+    if (!place) return '';
+    const wp = Geo.nearestWaypoint(place);
+    if (!wp) return '';
+    const where = place.kind === 'waypoint' ? '' : `${esc(place.name)}, ${esc(Geo.mapName(place.map))} – `;
+    return `<div class="wp">📍 ${where}nearest waypoint: <strong>${esc(wp.name)}</strong> ${chatBtn(wp.chat)}</div>`;
+  }
+
+  // NPCs/Orte aus dem Wiki-Abschnitt -> Standort (über die Wiki-Seite des NPCs) -> nächste Wegmarke
+  const placeCache = new Map();
+  async function placeFor(title) {
+    const direct = Geo.locate(title);
+    if (direct) return { place: direct };
+    if (placeCache.has(title)) return placeCache.get(title);
+    const promise = (async () => {
+      const res = await Wiki.page(S.wikiLang, title);
+      const page = Wiki.sanitize(S.wikiLang, res.html);
+      // Infobox zuerst (dort steht beim NPC der Standort), dann der restliche Text
+      const links = [...page.querySelectorAll('.infobox a[data-wiki], table a[data-wiki]'), ...page.querySelectorAll('a[data-wiki]')]
+        .map((l) => l.dataset.wiki);
+      for (const t of links.slice(0, 80)) {
+        const place = Geo.locate(t);
+        if (place) return { place, via: t };
+      }
+      return null;
+    })().catch(() => null);
+    placeCache.set(title, promise);
+    return promise;
+  }
+
+  async function renderPlaces(a, inf, names, content, wikiNames, pageTitle, token) {
+    const el = $('#places');
+    if (inf.finished) { el.innerHTML = ''; return; }
+    try { await Geo.load(S.wikiLang); } catch (e) { console.warn('Geo', e); return; }
+    if (token !== S.viewToken) return;
+    renderTodo(a, inf, names, content, wikiNames); // Schritte bekommen jetzt ihre Wegmarken
+
+    const skip = new Set([norm(pageTitle), norm(a.name), ...(wikiNames || names).map((n) => norm(n.label))]);
+    const titles = [...new Set([...content.querySelectorAll('a[data-wiki]')].map((l) => l.dataset.wiki))]
+      .filter((t) => !skip.has(norm(t)) && !S.byName?.has(norm(t)) && !Geo.isMap(t))
+      .slice(0, 6);
+    if (!titles.length) { el.innerHTML = ''; return; }
+    el.innerHTML = '<h2>📍 Where to go</h2><p class="muted">Looking up locations…</p>';
+    const found = (await Promise.all(titles.map(async (t) => ({ t, r: await placeFor(t) }))))
+      .filter((x) => x.r && !skip.has(norm(x.r.place.name))); // schon an einem Schritt angezeigt
+    if (token !== S.viewToken) return;
+    const rows = found.map(({ t, r }) => {
+      const line = waypointLine(r.place);
+      if (!line) return '';
+      return `<li><span class="check">📍</span><div class="grow"><a href="${wikiRoute(S.wikiLang, t)}">${esc(t)}</a>
+        ${line.replace('<div class="wp">📍 ', '<div class="wp">')}</div></li>`;
+    }).filter(Boolean);
+    el.innerHTML = rows.length ? `<h2>📍 Where to go</h2><ol class="steps">${rows.join('')}</ol>
+      <p class="muted">Tap a chat code to copy it, paste it into the in-game chat and click it to see the spot on your map.</p>` : '';
   }
 
   // Link im Wiki-Text, dessen Text genau dem Schritt entspricht (z. B. Ortsname -> eigene Wiki-Seite).
@@ -539,8 +601,10 @@
           ${n.type !== 'Text' ? `<a class="sub" href="${wikiRoute(S.wikiLang, wikiLabel)}">Wiki page</a>` : ''}</div>`;
         if (apiDone) { done.push(item(`<span class="check">✔</span><div class="grow">${head}</div>`, 'done')); return; }
         const hint = content ? findWikiHint(content, wikiLabel) : null;
+        const wpLine = n.type === 'Text' ? waypointLine(Geo.locate(wikiLabel)) : '';
         const mark = S.account ? '○' : `<input type="checkbox" class="manual" data-bit="${i}" ${manual.has(i) ? 'checked' : ''} title="Tick off manually (no API key)">`;
         todo.push(item(`<span class="check">${mark}</span><div class="grow">${head}
+          ${wpLine}
           ${hint ? `<div class="hint wiki">${hint}</div>` : ''}
           ${!hint && n.type !== 'Text' ? `<button class="small acq" data-bit="${i}">How do I get this? (wiki)</button><div class="acq-out wiki"></div>` : ''}
           ${!hint && n.type === 'Text' && !linked && content ? (findWikiLink(content, wikiLabel)
