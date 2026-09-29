@@ -35,7 +35,7 @@ const Wiki = (() => {
     }
   }
 
-  async function findByName(lang, name, context) {
+  async function findByName(lang, name, context, search = true) {
     if (!name) return null;
     const suffix = SUFFIX[lang]?.[context];
     const cands = suffix ? [`${name} (${suffix})`, name] : [name];
@@ -51,12 +51,17 @@ const Wiki = (() => {
       const t = resolveTitle(c);
       if (t) return t;
     }
+    if (!search) return null;
     const s = await api(lang, { action: 'query', list: 'search', srsearch: name, srlimit: 1 });
     return s.query?.search?.[0]?.title || null;
   }
 
+  // Reihenfolge: eigene Seite mit genau diesem Namen, dann Spiel-ID (oft eine Kategorieseite,
+  // auf der der Erfolg nur ein Abschnitt ist), zuletzt Volltextsuche.
   async function findPage(lang, { id, name, context }) {
-    return (id != null && (await findByGameId(lang, id, context))) || (await findByName(lang, name, context));
+    return (await findByName(lang, name, context, false))
+      || (id != null && (await findByGameId(lang, id, context)))
+      || (await findByName(lang, name, context));
   }
 
   async function parse(lang, title, section) {

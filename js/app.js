@@ -285,18 +285,16 @@
       <section id="todo" class="todo"><h2>What you still need to do</h2><p class="muted">Loading…</p></section>
       <details id="done-box" class="box" hidden><summary></summary><div id="done-body"></div></details>
       <details id="guide-box" class="box"><summary>📖 Full wiki guide</summary><div id="guide"><p class="muted">Loading wiki page…</p></div></details>
-      <details id="more-box" class="box"><summary>ℹ️ Details: description, rewards, tiers, category</summary>
+      <details id="more-box" class="box"><summary>ℹ️ Details: description, rewards, tiers</summary>
         ${a.description ? `<p class="desc">${esc(stripTags(a.description))}</p>` : ''}
         ${a.locked_text ? `<p class="muted"><strong>Unlock:</strong> ${esc(stripTags(a.locked_text))}</p>` : ''}
         <p class="muted">Tiers: ${tierText || '—'} · ID ${a.id}</p>
         <div class="flags">${flags.map((f) => `<span class="pill">${esc(f)}</span>`).join(' ')}</div>
         <div id="rewards"></div>
-        <div id="category"></div>
         <p><a class="btn" id="wiki-link" target="_blank" rel="noopener" href="${Wiki.searchUrl(S.wikiLang, a.name)}">Open in wiki ↗</a></p>
       </details>`;
 
     rewardsHtml(a).then((h) => { if (token === S.viewToken) $('#rewards').innerHTML = h; });
-    renderCategory(a);
 
     const names = await bitNames(a, S.lang);
     if (token !== S.viewToken) return;
@@ -306,9 +304,20 @@
       const wiki = await loadWiki(a);
       if (token !== S.viewToken) return;
       $('#wiki-link').href = Wiki.pageUrl(S.wikiLang, wiki.title);
-      const content = Wiki.sanitize(S.wikiLang, wiki.html);
+      let content = Wiki.sanitize(S.wikiLang, wiki.html);
+      // Seite gehört nicht nur zu diesem Erfolg (z. B. Kategorieseite)? Dann nur dessen Abschnitt.
+      const wikiName = wiki.ach?.name || a.name;
+      const ownPage = norm(wiki.title.replace(/\s*\((achievement|erfolg)\)$/i, '')) === norm(wikiName);
+      let section = null;
+      if (!ownPage) {
+        const others = S.wikiLang === S.lang
+          ? categoryIds(S.catOf.get(a.id)).filter((x) => x !== a.id).map((x) => S.ach.get(x)?.name).filter(Boolean)
+          : [];
+        section = extractSection(content, wikiName, others);
+        if (section) content = section;
+      }
       if (!requirement) {
-        const wr = wikiRequirement(content);
+        const wr = section ? sectionRequirement(section, wikiName) : wikiRequirement(content);
         if (wr) {
           S.wikiReq.set(a.id, wr);
           $('.focus-head h1').insertAdjacentHTML('afterend', `<p class="req">${esc(wr)} <span class="sub">(from the wiki)</span></p>`);
@@ -317,7 +326,7 @@
       const wikiNames = S.wikiLang === S.lang ? names : await bitNames(wiki.ach, S.wikiLang);
       if (token !== S.viewToken) return;
       renderTodo(a, inf, names, content, wikiNames);
-      renderGuide(content, wiki.title);
+      renderGuide(content, wiki.title, section ? wikiName : null);
     } catch (e) {
       if (token !== S.viewToken) return;
       $('#guide').innerHTML = `<p class="muted">No matching wiki page found (${esc(e.message)}).
@@ -350,18 +359,6 @@
     return !(a.bits || []).length && META_RE.test(stripTags(a.requirement)) && categoryIds(cat).length > 2;
   }
 
-  // Kategorie-Übersicht unter „Details“ (bei Meta-Erfolgen steht das Wichtige schon oben).
-  function renderCategory(a) {
-    const el = $('#category');
-    const cat = S.catOf.get(a.id);
-    const others = categoryIds(cat).filter((id) => id !== a.id).map((id) => S.ach.get(id)).filter(Boolean);
-    if (!others.length || isMeta(a)) { el.innerHTML = ''; return; }
-    const open = others.filter((oa) => !Progress.info(oa, S.progress.get(oa.id)).finished).length;
-    el.innerHTML = `<h3>Other achievements in “${esc(cat.name)}” ${S.account ? `<span class="sub">✔ ${others.length - open} · ○ ${open}</span>` : ''}</h3>
-      <ol class="steps compact">${others.map((oa) => `<li class="${Progress.info(oa, S.progress.get(oa.id)).finished ? 'done' : ''}">
-        <a href="#/a/${oa.id}" class="grow">${esc(oa.name)}</a> ${stateBadge(oa)}</li>`).join('')}</ol>`;
-  }
-
   // Sucht im Wiki-Inhalt das kleinste Element (Tabellenzeile, Listeneintrag, …), das den Text enthält.
   function findWikiHint(content, label) {
     const needle = norm(label).replace(/[.!:]+$/, '');
@@ -372,9 +369,12 @@
       const len = norm(el.textContent).length;
       if (len < bestLen && norm(el.textContent).includes(needle)) { best = el; bestLen = len; }
     }
-    if (best) best = best.closest('tr') || best; // Ganze Tabellenzeile zeigen (enthält meist Fundort/Notizen)
-    if (best && norm(best.textContent).length > 1500) return null;
     if (!best) return null;
+    // Ganze Tabellenzeile zeigen (enthält meist Fundort/Notizen) – aber nur, wenn sie nicht riesig ist
+    // Nur wenn der Treffer selbst eine Zelle ist (eine Zeile pro Schritt), die ganze Zeile nehmen
+    if (best.matches('td, th')) best = best.closest('tr');
+    const len = norm(best.textContent).length;
+    if (len > 1500 || len < needle.length + 6) return null; // zu groß oder nur der Name selbst -> kein Mehrwert
     if (best.tagName === 'TR') {
       const table = best.closest('table');
       const head = table?.querySelector('tr');
@@ -387,7 +387,70 @@
     return best.innerHTML;
   }
 
+  // Link im Wiki-Text, dessen Text genau dem Schritt entspricht (z. B. Ortsname -> eigene Wiki-Seite).
+  function findWikiLink(content, label) {
+    const needle = norm(label);
+    return content ? [...content.querySelectorAll('a[data-wiki]')].find((l) => norm(l.textContent) === needle)?.dataset.wiki : null;
+  }
+
   function manualKey(id) { return `manual-${id}`; }
+
+  // Viele Erfolge haben keine eigene Wiki-Seite, sondern sind ein Abschnitt einer Kategorieseite
+  // (z. B. „Explorer“). Schneidet nur den Teil zu diesem Erfolg heraus.
+  function extractSection(content, name, otherNames) {
+    const target = norm(name);
+    const others = otherNames.map(norm).filter((n) => n.length > 3 && n !== target && !target.includes(n));
+    const hasOther = (el) => { const t = norm(el.textContent); return others.some((n) => t.includes(n)); };
+    const HEAD = 'h2, h3, h4, h5, h6';
+    const rank = (el) => (el.matches(HEAD) || el.closest(HEAD) ? 0 : el.matches('caption, th, dt') ? 1 : el.matches('b, strong') ? 2 : el.tagName === 'A' ? 4 : 3);
+    const cands = [...content.querySelectorAll('h2, h3, h4, h5, h6, caption, th, dt, b, strong, td, div, span, a')]
+      .filter((el) => norm(el.textContent) === target)
+      .sort((x, y) => rank(x) - rank(y));
+    if (!cands.length) return null;
+    const box = document.createElement('div');
+    const start = cands[0];
+
+    // Überschrift: alles bis zur nächsten Überschrift gleicher oder höherer Ebene
+    const h = start.closest(HEAD);
+    if (h) {
+      const level = +h.tagName[1];
+      const wrap = h.parentElement?.classList.contains('mw-heading') ? h.parentElement : h;
+      const levelOf = (el) => { const hh = el.matches(HEAD) ? el : el.classList.contains('mw-heading') ? el.querySelector(HEAD) : null; return hh ? +hh.tagName[1] : 99; };
+      for (let n = wrap.nextElementSibling; n && levelOf(n) > level; n = n.nextElementSibling) box.appendChild(n.cloneNode(true));
+      return box.childNodes.length ? box : null;
+    }
+
+    // Sonst: vom Namen aus nach oben, solange kein anderer Erfolg mit hineinrutscht
+    let node = start;
+    while (node.parentElement && node.parentElement !== content && !hasOther(node.parentElement)) node = node.parentElement;
+    // Nur der Titel erwischt (z. B. Kopfzeile einer Tabelle)? Dann folgende Geschwister dazunehmen.
+    const parts = [node];
+    if (norm(node.textContent).length < target.length + 25) {
+      for (let n = node.nextElementSibling; n && !hasOther(n) && !n.matches(HEAD) && !n.classList.contains('mw-heading'); n = n.nextElementSibling) parts.push(n);
+    }
+    if (parts[0].tagName === 'TR') {
+      const table = document.createElement('table');
+      table.className = parts[0].closest('table')?.className || '';
+      parts.forEach((r) => table.appendChild(r.cloneNode(true)));
+      box.appendChild(table);
+    } else {
+      parts.forEach((n) => box.appendChild(n.cloneNode(true)));
+    }
+    return box;
+  }
+
+  // Anforderung aus einem herausgeschnittenen Abschnitt: erster Text, der nicht Titel oder Flavor-Text ist.
+  function sectionRequirement(section, name) {
+    const target = norm(name);
+    for (const el of section.querySelectorAll('p, td, dd, div')) {
+      if (el.querySelector('p, td, dd, div, table')) continue;
+      const c = el.cloneNode(true);
+      c.querySelectorAll('i, em, ul, ol, dl, table, button, img').forEach((x) => x.remove());
+      const text = c.textContent.replace(/\s+/g, ' ').trim().replace(/\s*Objectives?:?$/i, '');
+      if (text.length >= 8 && norm(text) !== target) return text;
+    }
+    return '';
+  }
 
   // Anforderung: API-Text, sonst aus dem Wiki (manche Erfolge haben in der API kein Anforderungsfeld).
   function requirementOf(a) {
@@ -473,7 +536,9 @@
         todo.push(item(`<span class="check">${mark}</span><div class="grow">${head}
           ${hint ? `<div class="hint wiki">${hint}</div>` : ''}
           ${!hint && n.type !== 'Text' ? `<button class="small acq" data-bit="${i}">How do I get this? (wiki)</button><div class="acq-out wiki"></div>` : ''}
-          ${!hint && n.type === 'Text' && !linked && content ? '<div class="sub" style="margin-left:0">No specific hint found – see the wiki guide below.</div>' : ''}
+          ${!hint && n.type === 'Text' && !linked && content ? (findWikiLink(content, wikiLabel)
+            ? `<a class="sub" style="margin-left:0" href="${wikiRoute(S.wikiLang, findWikiLink(content, wikiLabel))}">Wiki page: where is it? ›</a>`
+            : '<div class="sub" style="margin-left:0">No specific hint found – see the wiki guide below.</div>') : ''}
         </div>`, !S.account && manual.has(i) ? 'done' : ''));
       });
     } else if (isMeta(a)) {
@@ -539,9 +604,9 @@
 
   const OPEN_SECTIONS = /walkthrough|guide|objective|collection|location|strategy|tips|ziel|lösung|anleitung|fundort|sammlung|tipps|strategie/i;
 
-  function renderGuide(content, title) {
+  function renderGuide(content, title, sectionName) {
     const el = $('#guide');
-    el.innerHTML = `<p class="muted">From the Guild Wars 2 Wiki: <a href="${wikiRoute(S.wikiLang, title)}">${esc(title)}</a> (CC BY-NC-SA).
+    el.innerHTML = `<p class="muted">From the Guild Wars 2 Wiki: <a href="${wikiRoute(S.wikiLang, title)}">${esc(title)}</a>${sectionName ? ` (only the part about “${esc(sectionName)}”)` : ''} (CC BY-NC-SA).
       Tap images to enlarge, tap chat codes to copy.</p>`;
     renderSections(el, content);
   }
