@@ -596,13 +596,24 @@
   // Freischaltung aus dem Wiki: erster kurzer Satz/Absatz mit „unlock“; darin genannte Erfolge werden verlinkt.
   const UNLOCK_RE = /\bunlock(s|ed)?\b|prerequisites?|requires? (the )?complet|after (completing|finishing)|must (first )?(complete|finish)|only (becomes )?available after|freigeschaltet|voraussetzung|déverrouill/i;
   function wikiUnlockHint(content) {
-    // Infobox-Feld „Prerequisite(s)“ zuerst
-    for (const label of content.querySelectorAll('th, dt, b, strong')) {
-      if (!/^(prerequisites?|requires|unlocked by|voraussetzung(en)?)\s*:?$/i.test(label.textContent.trim())) continue;
-      const val = label.matches('th, dt') ? label.nextElementSibling : label.parentElement;
-      const text = (val?.textContent || '').replace(label.textContent, '').replace(/\s+/g, ' ').trim().replace(/^:\s*/, '');
-      if (text.length > 2) {
-        const achs = [...(val?.querySelectorAll('a[data-wiki]') || [])].map((l) => S.byName?.get(norm(l.dataset.wiki))).filter(Boolean);
+    // Beschriftung „Prerequisite(s)“ – als Tabellen-/Listenfeld, fetter Text, Überschrift oder eigener Block
+    const LABEL = /^(prerequisites?|requires|required|unlocked by|unlock requirements?|voraussetzung(en)?)\s*:?$/i;
+    const HEAD = 'h2, h3, h4, h5, h6';
+    for (const label of content.querySelectorAll('th, dt, b, strong, h2, h3, h4, h5, h6, div, span, p, caption')) {
+      if (!LABEL.test(label.textContent.trim())) continue;
+      if ([...label.children].some((c) => LABEL.test(c.textContent.trim()))) continue; // inneres Element übernimmt
+      const vals = [];
+      const heading = label.closest(HEAD) || (label.matches('div, span, p, caption') && !label.children.length ? label : null);
+      if (label.matches('th, dt')) vals.push(label.nextElementSibling);
+      else if (heading) {
+        // Überschrift/Block: folgende Geschwister bis zur nächsten Überschrift
+        const wrap = heading.parentElement?.classList.contains('mw-heading') ? heading.parentElement : heading;
+        for (let n = wrap.nextElementSibling; n && !n.matches(HEAD) && !n.classList.contains('mw-heading') && vals.length < 4; n = n.nextElementSibling) vals.push(n);
+      } else vals.push(label.parentElement);
+      const text = vals.map((v) => v?.textContent || '').join(' ').replace(label.textContent, '').replace(/\s+/g, ' ').trim().replace(/^:\s*/, '');
+      if (text.length > 2 && text.length < 500) {
+        const achs = vals.flatMap((v) => [...(v?.querySelectorAll('a[data-wiki]') || [])])
+          .map((l) => S.byName?.get(norm(l.dataset.wiki))).filter(Boolean);
         return { text: `Prerequisite: ${text}`, achs };
       }
     }
