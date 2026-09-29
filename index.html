@@ -1,0 +1,37 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>GW2 Erfolgs-Helfer</title>
+  <meta name="description" content="Guild Wars 2 Erfolge suchen, Run-Through aus dem Wiki erstellen und leichte AP finden.">
+  <link rel="stylesheet" href="css/style.css">
+</head>
+<body>
+  <header class="top">
+    <a class="brand" href="#/">⚜ GW2 Erfolgs-Helfer</a>
+    <nav>
+      <a href="#/" data-nav="search">Suche</a>
+      <a href="#/easy" data-nav="easy">Leichte AP</a>
+      <a href="#/settings" data-nav="settings">Einstellungen</a>
+    </nav>
+    <div id="account" class="account"></div>
+  </header>
+  <div id="status" class="status" hidden>
+    <span id="status-text"></span>
+    <div class="bar"><div id="status-bar"></div></div>
+  </div>
+  <main id="view"><p class="muted">Lade…</p></main>
+  <div id="toast" class="toast" hidden></div>
+  <footer>
+    Daten: <a href="https://wiki.guildwars2.com/wiki/API:Main" target="_blank" rel="noopener">GW2 API</a> ·
+    Guides: <a href="https://wiki.guildwars2.com" target="_blank" rel="noopener">Guild Wars 2 Wiki</a> (CC BY-NC-SA 3.0).
+    Inoffizielles Fan-Tool – Guild Wars 2 © ArenaNet.
+  </footer>
+  <script src="js/db.js"></script>
+  <script src="js/api.js"></script>
+  <script src="js/progress.js"></script>
+  <script src="js/wiki.js"></script>
+  <script src="js/app.js"></script>
+</body>
+</html>
