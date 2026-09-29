@@ -278,11 +278,13 @@
         </div>
       </header>
       <section id="prereq"></section>
+      <section id="category"></section>
       <section id="steps"><h2>Run-Through</h2><p class="muted">Lade Schritte…</p></section>
       <section id="guide"><h2>Wiki-Guide</h2><p class="muted">Lade Wiki-Seite…</p></section>`;
 
     rewardsHtml(a).then((h) => { if (token === S.viewToken) $('#rewards').innerHTML = h; });
     renderPrereqs(a);
+    renderCategory(a);
 
     const names = await bitNames(a, S.lang);
     if (token !== S.viewToken) return;
@@ -317,6 +319,37 @@
     S.wikiCache.set(ck, promise);
     promise.catch(() => S.wikiCache.delete(ck));
     return promise;
+  }
+
+  // Meta-Erfolg: keine Einzelschritte, Anforderung verweist auf andere Erfolge der Kategorie.
+  const META_RE = /erfolg|achievement|succès|succes|logro/i;
+  function categoryIds(cat) {
+    return (cat?.achievements || []).map((e) => (typeof e === 'object' ? e.id : e));
+  }
+  function isMeta(a) {
+    const cat = S.catOf.get(a.id);
+    return !(a.bits || []).length && META_RE.test(stripTags(a.requirement)) && categoryIds(cat).length > 2;
+  }
+
+  function renderCategory(a) {
+    const el = $('#category');
+    const cat = S.catOf.get(a.id);
+    const others = categoryIds(cat).filter((id) => id !== a.id).map((id) => S.ach.get(id)).filter(Boolean);
+    if (!others.length) { el.innerHTML = ''; return; }
+    const meta = isMeta(a);
+    const rows = others.map((oa) => ({ oa, inf: Progress.info(oa, S.progress.get(oa.id)) }))
+      .sort((x, y) => x.inf.finished - y.inf.finished);
+    const openCount = rows.filter((r) => !r.inf.finished).length;
+    const list = `<ol class="steps">${rows.map(({ oa, inf }) => `
+      <li class="${inf.finished ? 'done' : ''}"><span class="check">${inf.finished ? '✔' : '○'}</span>
+        <div class="grow"><a href="#/a/${oa.id}">${esc(oa.name)}</a>
+          <div class="sub" style="margin-left:0">${esc(stripTags(oa.requirement).replace(/\s+/g, ' '))}</div></div>
+        ${stateBadge(oa)}</li>`).join('')}</ol>`;
+    el.innerHTML = meta
+      ? `<h2>Zählt für diesen Meta-Erfolg ${S.account ? `<span class="pill warn">${openCount} offen</span>` : ''}</h2>
+         <p class="muted">„${esc(a.name)}“ bekommst du, indem du Erfolge aus der Kategorie „${esc(cat.name)}“ abschließt.
+           Offene stehen oben – tippe einen an für dessen Run-Through.</p>${list}`
+      : `<details><summary>Weitere Erfolge in „${esc(cat.name)}“ (${others.length}${S.account ? `, ${openCount} offen` : ''})</summary>${list}</details>`;
   }
 
   function renderPrereqs(a) {
@@ -409,7 +442,7 @@
           <div class="grow">Stufe: ${t.count}× erreichen <span class="pill">${t.points} AP</span>
           ${!done && S.account ? `<span class="sub">noch ${t.count - inf.current}</span>` : ''}</div></li>`;
       }).join('')}</ol>
-      <p class="muted">Dieser Erfolg hat keine Einzelschritte – Details stehen im Wiki-Guide unten.</p>`;
+      <p class="muted">${isMeta(a) ? 'Jede Stufe zählt abgeschlossene Erfolge aus der Liste „Zählt für diesen Meta-Erfolg“ oben.' : 'Dieser Erfolg hat keine Einzelschritte – Details stehen im Wiki-Guide unten.'}</p>`;
     }
 
     el.innerHTML = `<h2>Run-Through</h2>
@@ -586,7 +619,10 @@
         const pa = S.ach.get(pid);
         return pa && !Progress.info(pa, S.progress.get(pid)).finished;
       });
-      rows.push({ a, inf, cat, grp: S.groupOf.get(cat.id), locked });
+      const meta = isMeta(a);
+      const grp = S.groupOf.get(cat.id);
+      const historic = /^(historisch|historic|historique|histórico)/i.test(grp?.name || '');
+      rows.push({ a, inf, cat, grp, locked, meta, historic, ease: inf.ease * (meta ? 0.1 : 1) });
     }
     return rows;
   }
@@ -618,6 +654,8 @@
         <label><input type="checkbox" id="f-locked" ${f.hideLocked ? 'checked' : ''}> Gesperrte ausblenden</label>
         <label><input type="checkbox" id="f-pvp" ${f.hidePvp ? 'checked' : ''}> PvP ausblenden</label>
         <label><input type="checkbox" id="f-rep" ${f.hideRepeatable ? 'checked' : ''}> Wiederholbare ausblenden</label>
+        <label title="Erfolge vergangener/saisonaler Events – nur während des jeweiligen Festivals machbar"><input type="checkbox" id="f-hist" ${f.hideHistoric !== false ? 'checked' : ''}> Historische ausblenden</label>
+        <label title="Meta-Erfolge brauchen mehrere andere Erfolge"><input type="checkbox" id="f-meta" ${f.hideMeta ? 'checked' : ''}> Meta-Erfolge ausblenden</label>
       </div>
       <details class="groups"><summary>Gruppen filtern (${S.groups.length - f.excludedGroups.length}/${S.groups.length} aktiv)</summary>
         <div class="group-list">${S.groups.map((g) => `<label><input type="checkbox" class="f-group" value="${esc(g.id)}" ${f.excludedGroups.includes(g.id) ? '' : 'checked'}> ${esc(g.name)}</label>`).join('')}</div>
@@ -632,6 +670,8 @@
     $('#f-locked').onchange = (e) => { f.hideLocked = e.target.checked; update(); };
     $('#f-pvp').onchange = (e) => { f.hidePvp = e.target.checked; update(); };
     $('#f-rep').onchange = (e) => { f.hideRepeatable = e.target.checked; update(); };
+    $('#f-hist').onchange = (e) => { f.hideHistoric = e.target.checked; update(); };
+    $('#f-meta').onchange = (e) => { f.hideMeta = e.target.checked; update(); };
     view.querySelectorAll('.f-group').forEach((cb) => cb.onchange = () => {
       f.excludedGroups = [...view.querySelectorAll('.f-group')].filter((c) => !c.checked).map((c) => c.value);
       $('.groups summary').textContent = `Gruppen filtern (${S.groups.length - f.excludedGroups.length}/${S.groups.length} aktiv)`;
@@ -647,15 +687,17 @@
       !(f.hideLocked && r.locked) &&
       !(f.hidePvp && (r.a.flags || []).includes('Pvp')) &&
       !(f.hideRepeatable && r.inf.repeatable) &&
+      !(f.hideHistoric !== false && r.historic) &&
+      !(f.hideMeta && r.meta) &&
       !(f.onlyStarted && r.inf.current === 0) &&
       r.inf.frac * 100 >= f.minProgress &&
       !(r.grp && excluded.has(r.grp.id)));
     const sorters = {
-      ease: (x, y) => y.inf.ease - x.inf.ease,
+      ease: (x, y) => y.ease - x.ease,
       progress: (x, y) => y.inf.next.frac - x.inf.next.frac || x.inf.next.steps - y.inf.next.steps,
       steps: (x, y) => x.inf.next.steps - y.inf.next.steps || y.inf.next.points - x.inf.next.points,
-      next: (x, y) => y.inf.next.points - x.inf.next.points || y.inf.ease - x.inf.ease,
-      remaining: (x, y) => y.inf.remainingAP - x.inf.remainingAP || y.inf.ease - x.inf.ease,
+      next: (x, y) => y.inf.next.points - x.inf.next.points || y.ease - x.ease,
+      remaining: (x, y) => y.inf.remainingAP - x.inf.remainingAP || y.ease - x.ease,
     };
     rows.sort(sorters[f.sort] || sorters.ease);
     const sumNext = rows.reduce((s, r) => s + r.inf.next.points, 0);
@@ -666,7 +708,7 @@
       <thead><tr><th></th><th>Erfolg</th><th>Fortschritt</th><th title="Schritte bis zur nächsten Stufe">Nächste Stufe</th><th>Offen</th></tr></thead>
       <tbody>${top.map((r) => `<tr onclick="location.hash='#/a/${r.a.id}'">
         <td>${achIcon(r.a)}</td>
-        <td><a href="#/a/${r.a.id}">${esc(r.a.name)}</a>${r.locked ? ' <span class="pill warn" title="Voraussetzung/Freischaltung fehlt">🔒</span>' : ''}
+        <td><a href="#/a/${r.a.id}">${esc(r.a.name)}</a>${r.locked ? ' <span class="pill warn" title="Voraussetzung/Freischaltung fehlt">🔒</span>' : ''}${r.meta ? ' <span class="pill" title="Braucht mehrere andere Erfolge dieser Kategorie">Meta</span>' : ''}
           <div class="sub">${catPath(r.a)}</div></td>
         <td class="prog">${bar(r.inf.frac)}<span class="sub">${r.inf.current}/${r.inf.maxCount}</span></td>
         <td><strong>+${r.inf.next.points} AP</strong><div class="sub">noch ${r.inf.next.steps}</div></td>
