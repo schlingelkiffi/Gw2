@@ -1,8 +1,8 @@
 // Orte & Wegmarken: Kartendaten der GW2-API (/v2/continents/1/floors/1), um zu einem Ort
 // (Gebiet, Sehenswürdigkeit) die nächstgelegene Wegmarke samt Chat-Code zu finden.
 const Geo = (() => {
-  const MAX_AGE = 30 * 24 * 3600 * 1000;
-  const CACHE_VERSION = 2; // erhöhen, wenn sich das reduzierte Format ändert // Karten ändern sich selten
+  const MAX_AGE = 30 * 24 * 3600 * 1000; // Karten ändern sich selten
+  const CACHE_VERSION = 2; // erhöhen, wenn sich das reduzierte Format ändert
   const norm = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
     .replace(/[’']/g, "'").replace(/\s+/g, ' ').trim();
   const vals = (o) => (Array.isArray(o) ? o : Object.values(o || {}));
