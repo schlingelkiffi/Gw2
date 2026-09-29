@@ -399,14 +399,24 @@
   // ---------- Orte & Wegmarken ----------
   const chatBtn = (code) => (code ? `<button type="button" class="chatlink" data-code="${esc(code)}" title="Copy and paste into the in-game chat">${esc(code)}</button>` : '');
 
-  // „📍 Nearest waypoint: X [&…]“ zu einem gefundenen Ort
+  // Ort mit Art + eigenem Chat-Code, dazu nächste Wegmarke und nächste Sehenswürdigkeit
+  const KIND = {
+    waypoint: ['🔹', 'Waypoint'], landmark: ['◆', 'Point of interest'], vista: ['🔭', 'Vista'],
+    area: ['📍', 'Area'], unlock: ['🔓', 'Point'],
+  };
+  const kindLabel = (k) => KIND[k] || ['📍', k || 'Location'];
   function waypointLine(place) {
     if (!place) return '';
-    const wp = Geo.nearestWaypoint(place);
-    if (!wp) return '';
-    if (place.kind === 'waypoint') return `<div class="wp">📍 Waypoint: <strong>${esc(wp.name)}</strong> ${chatBtn(wp.chat)}</div>`;
-    return `<div class="wp">📍 ${esc(place.name)}, ${esc(Geo.mapName(place.map))} ${chatBtn(place.chat)}
-      <br>🔹 Nearest waypoint: <strong>${esc(wp.name)}</strong> ${chatBtn(wp.chat)}</div>`;
+    const [icon, label] = kindLabel(place.kind);
+    const lines = [`${icon} ${label}: <strong>${esc(place.name)}</strong>${place.kind === 'waypoint' ? '' : `, ${esc(Geo.mapName(place.map))}`} ${chatBtn(place.chat)}`];
+    for (const kind of ['waypoint', 'landmark']) {
+      if (place.kind === kind) continue;
+      const n = Geo.nearest(place, kind);
+      if (!n) continue;
+      const [ni, nl] = kindLabel(kind);
+      lines.push(`${ni} Nearest ${nl.toLowerCase()}: <strong>${esc(n.name)}</strong> ${chatBtn(n.chat)}`);
+    }
+    return `<div class="wp">${lines.join('<br>')}</div>`;
   }
 
   // NPCs/Orte aus dem Wiki-Abschnitt -> Standort (über die Wiki-Seite des NPCs) -> nächste Wegmarke
@@ -451,7 +461,7 @@
       const line = waypointLine(r.place);
       if (!line) return '';
       return `<li><span class="check">📍</span><div class="grow"><a href="${wikiRoute(S.wikiLang, t)}">${esc(t)}</a>
-        ${line.replace('<div class="wp">📍 ', '<div class="wp">')}</div></li>`;
+        ${line}</div></li>`;
     }).filter(Boolean);
     el.innerHTML = rows.length ? `<h2>📍 Where to go</h2><ol class="steps">${rows.join('')}</ol>
       <p class="muted">Tap a chat code to copy it, paste it into the in-game chat and click it to see the spot on your map.</p>` : '';

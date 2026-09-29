@@ -62,22 +62,24 @@ const Geo = (() => {
     return world.byName.get(norm(name)) || world.byName.get(norm(name.replace(/\s*\(.*\)$/, ''))) || null;
   }
 
-  // Nächste Wegmarke auf derselben Karte.
-  function nearestWaypoint(place) {
+  // Nächster Punkt einer Art (waypoint, landmark, vista) auf derselben Karte – ohne den Ort selbst.
+  function nearest(place, kind) {
     if (!world || !place?.coord) return null;
-    if (place.kind === 'waypoint') return place;
+    const pool = kind === 'waypoint' ? world.waypoints : world.places.filter((p) => p.kind === kind);
     let best = null;
-    for (const w of world.waypoints) {
-      if (w.map !== place.map || !w.coord) continue;
+    for (const w of pool) {
+      if (w.map !== place.map || !w.coord || !w.chat) continue;
+      if (w.name === place.name && w.coord[0] === place.coord[0] && w.coord[1] === place.coord[1]) continue;
       const d = dist(w.coord, place.coord);
-      if (!best || d < best.d) best = { ...w, d };
+      if (!best || d < best.d) best = { kind, ...w, d };
     }
     return best;
   }
+  const nearestWaypoint = (place) => (place?.kind === 'waypoint' ? place : nearest(place, 'waypoint'));
 
   const mapName = (id) => world?.maps[id]?.name || '';
   // Ganze Karten (z. B. „Amnytas“) sind als Ziel zu grob
   const isMap = (name) => !!world && Object.values(world.maps).some((m) => norm(m.name) === norm(name));
 
-  return { load, locate, nearestWaypoint, mapName, isMap, get ready() { return !!world; } };
+  return { load, locate, nearest, nearestWaypoint, mapName, isMap, get ready() { return !!world; } };
 })();
