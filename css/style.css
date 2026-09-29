@@ -90,7 +90,9 @@ ol.steps > li.done { opacity: .55; }
 ol.steps > li.done .grow > div:first-child { text-decoration: line-through; }
 .check { width: 1.4rem; flex: none; text-align: center; color: var(--ok); }
 .check input { width: 1rem; height: 1rem; accent-color: var(--accent); }
-.steps-head { display: flex; justify-content: space-between; flex-wrap: wrap; gap: .5rem; }
+.steps-head { display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: .5rem; }
+.summary { display: flex; flex-wrap: wrap; gap: .35rem; margin: .4rem 0; }
+.summary .pill { font-size: .9rem; }
 .warn-box { border: 1px solid var(--warn); background: #d9a44115; padding: .6rem .8rem; border-radius: 8px; }
 
 details { margin: .4rem 0; }

@@ -55,7 +55,20 @@
     }
     S.groups = [...data.groups].sort((a, b) => a.order - b.order);
     for (const g of S.groups) for (const cid of g.categories || []) if (cats.has(cid)) S.groupOf.set(cid, g);
+    S.byName = new Map();
+    for (const a of data.achievements) {
+      const k = norm(a.name);
+      if (!S.byName.has(k) || (S.catOf.has(a.id) && !S.catOf.has(S.byName.get(k).id))) S.byName.set(k, a);
+    }
     S.easyRows = null;
+  }
+
+  // Einheitliche Übersicht: erledigt / offen / benötigt.
+  function summaryPills(done, open, needed) {
+    if (!S.account) return '';
+    return `<p class="summary"><span class="pill ok">✔ ${done} erledigt</span> <span class="pill warn">○ ${open} offen</span>
+      ${needed ? `<span class="pill">benötigt: ${needed}</span>` : ''}
+      ${needed && done < needed ? `<span class="pill">noch ${needed - done}</span>` : ''}</p>`;
   }
 
   async function loadStatic(force = false) {
@@ -350,11 +363,10 @@
       ? `<h2>Zählt für diesen Meta-Erfolg ${S.account ? `<span class="pill warn">${openCount} offen</span>` : ''}</h2>
          <p class="muted">„${esc(a.name)}“ bekommst du, indem du Erfolge aus der Kategorie „${esc(cat.name)}“ abschließt.
            Offene stehen oben – tippe einen an für dessen Run-Through.</p>
-         ${S.account ? `<p><span class="pill ok">✔ ${rows.length - openCount} erledigt</span> <span class="pill warn">○ ${openCount} offen</span>
-           ${inf0.maxCount ? `<span class="pill">benötigt: ${inf0.maxCount}</span>` : ''}</p>` : ''}
+         ${summaryPills(inf0.finished ? inf0.maxCount : inf0.current, openCount, inf0.maxCount)}
          ${list}
          <p class="muted">Hinweis: Nicht immer zählt jeder Erfolg der Kategorie für den Meta – Details im Wiki-Guide unten.</p>`
-      : `<details><summary>Weitere Erfolge in „${esc(cat.name)}“ (${others.length}${S.account ? `, ${openCount} offen` : ''})</summary>${list}</details>`;
+      : `<details><summary>Weitere Erfolge in „${esc(cat.name)}“ (${S.account ? `✔ ${others.length - openCount} erledigt · ○ ${openCount} offen` : others.length})</summary>${list}</details>`;
   }
 
   function renderPrereqs(a) {
@@ -399,6 +411,11 @@
 
   function manualKey(id) { return `manual-${id}`; }
 
+  // Ein Text-Schritt, der genau wie ein anderer Erfolg heißt (z. B. bei Story-Metas).
+  function linkedAch(n) {
+    return n.type === 'Text' ? S.byName?.get(norm(n.label).replace(/[.!]+$/, '')) : null;
+  }
+
   function renderSteps(a, inf, names, content, wikiNames) {
     const el = $('#steps');
     const manual = new Set(Store.get(manualKey(a.id), []));
@@ -408,17 +425,17 @@
     let body = '';
     if (bits.length) {
       const doneCount = bits.filter((_, i) => inf.finished || inf.bitsDone.has(i)).length;
-      const needed = inf.maxCount && inf.maxCount < bits.length ? `<p class="muted">Du brauchst <strong>${inf.maxCount}</strong> von ${bits.length} Objekten.</p>` : '';
+      const needed = inf.maxCount && inf.maxCount < bits.length ? inf.maxCount : bits.length;
       const order = bits.map((_, i) => i).sort((x, y) => {
         const dx = inf.finished || inf.bitsDone.has(x), dy = inf.finished || inf.bitsDone.has(y);
         return dx - dy || x - y;
       });
       body = `
         <div class="steps-head">
-          <span>${S.account ? `<strong>${doneCount}</strong> / ${bits.length} erledigt` : `${bits.length} Objekte`}</span>
+          ${S.account ? summaryPills(doneCount, bits.length - doneCount, needed) : `<span>${bits.length} Schritte</span>`}
           <label><input type="checkbox" id="hide-done" ${hideDone ? 'checked' : ''}> Erledigte ausblenden</label>
         </div>
-        ${needed}
+        ${needed < bits.length ? `<p class="muted">Du brauchst <strong>${needed}</strong> von ${bits.length} – nicht alle müssen erledigt werden.</p>` : ''}
         <ol class="steps">${order.map((i) => {
           const n = names[i];
           const apiDone = inf.finished || inf.bitsDone.has(i);
@@ -431,7 +448,8 @@
             <span class="check">${apiDone ? '✔' : `<input type="checkbox" class="manual" data-bit="${i}" ${manual.has(i) ? 'checked' : ''} title="Manuell abhaken">`}</span>
             <div class="grow">
               <div>${n.icon ? `<img class="mini" src="${esc(n.icon)}" alt="">` : ''}
-                <span class="${n.rarity ? `r-${esc(n.rarity)}` : ''}">${esc(n.label)}</span>
+                ${linkedAch(n) ? `<a href="#/a/${linkedAch(n).id}">${esc(n.label)}</a> ${stateBadge(linkedAch(n))}`
+                  : `<span class="${n.rarity ? `r-${esc(n.rarity)}` : ''}">${esc(n.label)}</span>`}
                 ${typeName ? `<span class="sub">${typeName}</span>` : ''}
                 ${n.type !== 'Text' ? `<a class="sub" href="${wikiRoute(S.wikiLang, wikiLabel)}">Wiki-Seite</a>` : ''}
               </div>
@@ -441,7 +459,11 @@
           </li>`;
         }).join('')}</ol>`;
     } else if (inf.tiers.length) {
-      body = `<ol class="steps">${inf.tiers.map((t) => {
+      const maxC = inf.maxCount;
+      const cur = inf.finished ? maxC : Math.min(inf.current, maxC);
+      body = `${isMeta(a) ? '' : S.account ? `<p class="summary"><span class="pill ok">✔ ${cur} geschafft</span>
+          <span class="pill warn">○ ${maxC - cur} fehlen</span> <span class="pill">benötigt: ${maxC}</span></p>` : ''}
+        <ol class="steps">${inf.tiers.map((t) => {
         const done = inf.finished || inf.current >= t.count;
         return `<li class="${done ? 'done' : ''}"><span class="check">${done ? '✔' : '○'}</span>
           <div class="grow">Stufe: ${t.count}× erreichen <span class="pill">${t.points} AP</span>
