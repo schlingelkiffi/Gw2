@@ -10,6 +10,17 @@ Ein Web-Tool für Guild-Wars-2-Erfolge, das komplett im Browser läuft. Oberflä
   - den **kompletten Wiki-Guide**, aufgeteilt in Abschnitte. Walkthrough, Ziele und Sammlung sind dabei aufgeklappt.
 - **Leichte AP**: Alle offenen Erfolge, sortiert nach geschätzter Leichtigkeit (AP der nächsten Stufe ÷ √fehlende Schritte × Fortschritt). Du kannst nach Gruppe, PvP, Wiederholbarkeit, gesperrten Erfolgen und Mindest-Fortschritt filtern. Tägliche und nicht mehr kategorisierte (meist unerreichbare) Erfolge sind ausgeblendet.
 
+## Weitere Funktionen
+
+- **Tracked (Merkliste):** Erfolge mit „☆ Track“ anheften; die Startseite zeigt sie mit Fortschritt und nächstem Schritt.
+- **AP-Ziel & Prognose:** Die Startseite zeigt deinen AP-Verlauf (täglich gespeichert) und schätzt, wann du dein Ziel erreichst (Standard 30.000, unter *Settings* änderbar).
+- **Items im Account:** Mit den Key-Rechten `inventories` + `characters` zeigt das Tool bei Sammlungen, welche Items schon in Bank, Materiallager oder Taschen liegen.
+- **Handelsposten-Kosten:** Preis der fehlenden handelbaren Items (Sofortkauf), bei „x von y“ die günstigsten nötigen.
+- **Map:** Karte wählen und alle offenen Schritte dort sehen – mit Wegmarken, Weltbossen und Timern.
+- **Event-Timer:** Bei Weltboss-Erfolgen der nächste Start in deiner Ortszeit (fester Tagesplan, Link zu den Wiki-Event-Timern).
+- **Belohnungs-Filter:** In *Easy AP* nach Meisterschaftspunkt, Titel, Item oder Gold filtern.
+- **Timegates:** Tageslimits aus dem Wiki, Fortschritt heute und Countdown bis zum Tagesreset (00:00 UTC).
+
 ## Desktop-Programm (Windows/Linux)
 
 Das Programm bietet zusätzlich zur Web-Version:

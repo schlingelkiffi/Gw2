@@ -32,7 +32,7 @@
 
   function coins(c) {
     const g = Math.floor(c / 10000), s = Math.floor((c % 10000) / 100), k = c % 100;
-    return [g && `${g}g`, s && `${s}s`, k && `${k}k`].filter(Boolean).join(' ') || '0k';
+    return [g && `${g}g`, s && `${s}s`, k && `${k}c`].filter(Boolean).join(' ') || '0c';
   }
 
   // ---------- Status / Laden ----------
@@ -78,15 +78,70 @@
     if (!S.key) { renderAccount(); return; }
     status('Loading account progress…');
     try {
-      const [acc, prog] = await Promise.all([GW2.account(S.key), GW2.accountAchievements(S.key)]);
+      const [acc, prog, token] = await Promise.all([GW2.account(S.key), GW2.accountAchievements(S.key), GW2.tokenInfo(S.key).catch(() => null)]);
       S.account = acc;
+      S.perms = token?.permissions || [];
       S.progress = new Map(prog.map((p) => [p.id, p]));
       S.progressTs = new Date();
+      recordDaily();
+      S.invPromise = loadInventory().catch((e) => console.warn('Inventar', e));
     } catch (e) {
       toast(`API key error: ${e.message}`);
     }
     status(null);
     renderAccount();
+  }
+
+  function totalAP() {
+    let ap = 0, doneCount = 0;
+    for (const [id, p] of S.progress) {
+      const a = S.ach.get(id);
+      if (!a) continue;
+      ap += Progress.info(a, p).earned;
+      if (p.done) doneCount++;
+    }
+    return { ap, doneCount, total: ap + (S.account?.daily_ap || 0) + (S.account?.monthly_ap || 0) };
+  }
+
+  const utcDay = (d = new Date()) => d.toISOString().slice(0, 10); // Tagesreset in GW2 = 00:00 UTC
+
+  // Täglicher AP-Stand (für Verlauf & Prognose) und Fortschritts-Schnappschuss (für „heute geschafft“)
+  function recordDaily() {
+    const today = utcDay();
+    const hist = Store.get('apHistory', {});
+    hist[today] = totalAP().total;
+    const days = Object.keys(hist).sort();
+    for (const d of days.slice(0, Math.max(0, days.length - 400))) delete hist[d];
+    Store.set('apHistory', hist);
+    let snap = Store.get('progSnap', null);
+    if (!snap || snap.date !== today) {
+      snap = { date: today, cur: {} };
+      for (const [id, p] of S.progress) if (p.current) snap.cur[id] = p.current;
+      Store.set('progSnap', snap);
+    }
+    S.snap = snap;
+  }
+
+  // Items im Account (Bank, Materiallager, geteilte Plätze, Charaktere) – nur mit passenden Key-Rechten
+  async function loadInventory() {
+    S.inv = null;
+    const perms = S.perms || [];
+    if (!S.key || !perms.includes('inventories')) return;
+    const inv = new Map();
+    const add = (id, n, where) => {
+      if (!id || !n) return;
+      const e = inv.get(id) || { count: 0, where: new Set() };
+      e.count += n; e.where.add(where); inv.set(id, e);
+    };
+    const [bank, mats, shared, chars] = await Promise.all([
+      GW2.bank(S.key).catch(() => []), GW2.materials(S.key).catch(() => []), GW2.sharedInventory(S.key).catch(() => []),
+      perms.includes('characters') ? GW2.characters(S.key).catch(() => []) : [],
+    ]);
+    bank.forEach((x) => x && add(x.id, x.count, 'Bank'));
+    mats.forEach((x) => x && add(x.id, x.count, 'Material storage'));
+    shared.forEach((x) => x && add(x.id, x.count, 'Shared slots'));
+    for (const c of chars) for (const bag of c.bags || []) for (const x of bag?.inventory || []) if (x) add(x.id, x.count, c.name);
+    S.inv = inv;
   }
 
   function renderAccount() {
@@ -95,14 +150,7 @@
       el.innerHTML = S.key ? '<span class="muted">Account not loaded</span>' : '<a href="#/settings">Add API key</a>';
       return;
     }
-    let ap = 0, doneCount = 0;
-    for (const [id, p] of S.progress) {
-      const a = S.ach.get(id);
-      if (!a) continue;
-      ap += Progress.info(a, p).earned;
-      if (p.done) doneCount++;
-    }
-    const total = ap + (S.account.daily_ap || 0) + (S.account.monthly_ap || 0);
+    const { ap, doneCount, total } = totalAP();
     el.innerHTML = `<strong>${esc(S.account.name)}</strong>
       <span class="pill" title="Achievement AP ${ap} + daily AP ${S.account.daily_ap || 0} + monthly AP ${S.account.monthly_ap || 0}">≈ ${total.toLocaleString('en-US')} AP</span>
       <span class="pill">${doneCount} completed</span>
@@ -146,6 +194,121 @@
     return `<div class="bar"><div style="width:${pct(frac)}"></div></div>`;
   }
 
+  // ---------- Merkliste ----------
+  const watchList = () => Store.get('watch', []);
+  const isWatched = (id) => watchList().includes(id);
+  function toggleWatch(id) {
+    const w = watchList();
+    const i = w.indexOf(id);
+    if (i >= 0) w.splice(i, 1); else w.unshift(id);
+    Store.set('watch', w);
+    return i < 0;
+  }
+
+  // Nächster sinnvoller Schritt als Kurztext
+  function nextStepText(a, inf) {
+    if (inf.finished) return 'Completed';
+    const openText = (a.bits || []).map((b, i) => (!inf.bitsDone.has(i) && b.type === 'Text' && b.text ? b.text : null)).filter(Boolean);
+    const left = inf.maxCount ? Math.max(0, inf.maxCount - inf.current) : 0;
+    if (openText.length) return `Next: ${openText[0]}${left > 1 ? ` (+${left - 1} more)` : ''}`;
+    if (left) return `${left.toLocaleString('en-US')} left – ${stripTags(a.requirement).replace(/\s+/g, ' ')}`;
+    return stripTags(a.requirement).replace(/\s+/g, ' ');
+  }
+
+  function trackedHtml() {
+    const ids = watchList().filter((id) => S.ach.has(id));
+    if (!ids.length) return '<p class="muted">📌 Tip: open an achievement and tap <strong>☆ Track</strong> to pin it here.</p>';
+    const rows = ids.map((id) => {
+      const a = S.ach.get(id);
+      const inf = Progress.info(a, S.progress.get(id));
+      const timer = typeof Timers !== 'undefined' ? Timers.forAchievement(a, S.catOf.get(id)) : null;
+      return `<li class="${inf.finished ? 'done' : ''}"><a class="row" href="#/a/${id}">${achIcon(a)}
+        <div class="grow"><div class="title">${esc(a.name)}</div>
+          <div class="sub">${esc(nextStepText(a, inf))}</div>
+          ${timer ? `<div class="sub">⏰ ${esc(timer.label)}</div>` : ''}
+          ${inf.maxCount > 1 ? bar(inf.frac) : ''}</div>
+        ${stateBadge(a)}</a></li>`;
+    });
+    return `<h2>📌 Tracked</h2><ul class="list tracked">${rows.join('')}</ul>`;
+  }
+
+  // AP-Verlauf & Prognose bis zum Ziel
+  function forecast() {
+    const hist = Store.get('apHistory', {});
+    const days = Object.keys(hist).sort();
+    const goal = Store.get('apGoal', 30000);
+    if (!days.length) return null;
+    const last = days[days.length - 1];
+    const cur = hist[last];
+    const dayMs = 86400000;
+    const recent = days.filter((d) => (Date.parse(last) - Date.parse(d)) / dayMs <= 30);
+    const first = recent[0];
+    const span = (Date.parse(last) - Date.parse(first)) / dayMs;
+    const rate = span >= 1 ? (cur - hist[first]) / span : null;
+    const remaining = goal - cur;
+    let eta = null;
+    if (remaining > 0 && rate > 0) eta = new Date(Date.now() + Math.ceil(remaining / rate) * dayMs);
+    return { hist, days, goal, cur, rate, span, remaining, eta };
+  }
+
+  function progressCardHtml() {
+    const f = S.account ? forecast() : null;
+    if (!f) return '';
+    const frac = Math.min(1, f.cur / f.goal);
+    let text;
+    if (f.remaining <= 0) text = `🎉 Goal of ${f.goal.toLocaleString('en-US')} AP reached!`;
+    else if (f.rate === null) text = `${f.remaining.toLocaleString('en-US')} AP to go. Come back on another day – from the second day on the tool estimates when you'll get there.`;
+    else if (f.rate <= 0) text = `${f.remaining.toLocaleString('en-US')} AP to go. No AP gained over the last ${Math.round(f.span)} day(s) – no estimate yet.`;
+    else {
+      const days = Math.ceil(f.remaining / f.rate);
+      text = `${f.remaining.toLocaleString('en-US')} AP to go · ≈ ${Math.round(f.rate).toLocaleString('en-US')} AP/day over the last ${Math.round(f.span)} day(s)
+        → around <strong>${f.eta.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</strong> (in ${days} day${days === 1 ? '' : 's'}).`;
+    }
+    return `<div class="card progress-card">
+      <div class="hero-row"><div class="big-num">${f.cur.toLocaleString('en-US')}<span> / ${f.goal.toLocaleString('en-US')} AP</span></div>
+        <a class="sub" href="#/settings">change goal</a></div>
+      ${bar(frac)}
+      <p class="muted">${text}</p>
+      ${f.days.length >= 2 ? `<div class="spark" id="spark"></div>` : ''}
+    </div>`;
+  }
+
+  // Kleine Verlaufskurve (eine Reihe, keine Legende) mit Hover/Tap-Tooltip
+  function drawSpark() {
+    const el = $('#spark');
+    const f = forecast();
+    if (!el || !f || f.days.length < 2) return;
+    const pts = f.days.slice(-60).map((d) => ({ d, v: f.hist[d] }));
+    const W = 320, H = 70, P = 4;
+    const t0 = Date.parse(pts[0].d), t1 = Date.parse(pts[pts.length - 1].d) || t0 + 1;
+    const vs = pts.map((p) => p.v);
+    const lo = Math.min(...vs);
+    const hi = Math.max(...vs) === lo ? lo + 1 : Math.max(...vs);
+    const x = (d) => P + ((Date.parse(d) - t0) / Math.max(1, t1 - t0)) * (W - 2 * P);
+    const y = (v) => H - P - ((v - lo) / Math.max(1, hi - lo)) * (H - 2 * P);
+    const line = pts.map((p) => `${x(p.d).toFixed(1)},${y(p.v).toFixed(1)}`).join(' ');
+    el.innerHTML = `<svg viewBox="0 0 ${W} ${H}" preserveAspectRatio="none" role="img" aria-label="AP per day">
+        <polygon points="${P},${H - P} ${line} ${W - P},${H - P}" class="spark-area"/>
+        <polyline points="${line}" class="spark-line"/>
+        <line class="spark-cross" x1="0" x2="0" y1="0" y2="${H}" visibility="hidden"/>
+        <circle class="spark-dot" r="4" visibility="hidden"/>
+      </svg><div class="spark-tip" hidden></div>`;
+    const svg = el.querySelector('svg'), cross = el.querySelector('.spark-cross'), dot = el.querySelector('.spark-dot'), tip = el.querySelector('.spark-tip');
+    const show = (evt) => {
+      const r = svg.getBoundingClientRect();
+      const px = ((evt.clientX - r.left) / r.width) * W;
+      const p = pts.reduce((best, q) => (Math.abs(x(q.d) - px) < Math.abs(x(best.d) - px) ? q : best), pts[0]);
+      cross.setAttribute('x1', x(p.d)); cross.setAttribute('x2', x(p.d)); cross.setAttribute('visibility', 'visible');
+      dot.setAttribute('cx', x(p.d)); dot.setAttribute('cy', y(p.v)); dot.setAttribute('visibility', 'visible');
+      tip.hidden = false;
+      tip.textContent = `${new Date(p.d).toLocaleDateString('en-GB', { day: 'numeric', month: 'short' })}: ${p.v.toLocaleString('en-US')} AP`;
+      tip.style.left = `${Math.min(r.width - 120, Math.max(0, (x(p.d) / W) * r.width - 60))}px`;
+    };
+    svg.addEventListener('pointermove', show);
+    svg.addEventListener('pointerdown', show);
+    svg.addEventListener('pointerleave', () => { tip.hidden = true; cross.setAttribute('visibility', 'hidden'); dot.setAttribute('visibility', 'hidden'); });
+  }
+
   // ---------- Suche ----------
   function showSearch() {
     setNav('search');
@@ -174,8 +337,9 @@
     const el = $('#results');
     const q = norm(S.query);
     if (q.length < 2) {
-      el.innerHTML = `<p class="muted">${S.ach.size.toLocaleString('en-US')} achievements loaded. Type at least 2 characters.
+      el.innerHTML = `${progressCardHtml()}${S.account ? trackedHtml() : ''}<p class="muted">${S.ach.size.toLocaleString('en-US')} achievements loaded. Type at least 2 characters.
         ${S.account ? '' : '<br>Tip: with an API key you see your progress and the <a href="#/easy">Easy AP finder</a>.'}</p>`;
+      drawSpark();
       return;
     }
     const idQuery = /^\d+$/.test(q) ? +q : null;
@@ -280,6 +444,7 @@
           <div class="sub">${catPath(a)}</div>
           <h1>${esc(a.name)}</h1>
           ${requirement ? `<p class="req">${esc(requirement)}</p>` : ''}
+          <button class="small watch" id="watch-btn">${isWatched(a.id) ? '★ Tracked' : '☆ Track'}</button>
           ${status}
         </div>
       </header>
@@ -297,10 +462,15 @@
       </details>`;
 
     rewardsHtml(a).then((h) => { if (token === S.viewToken) $('#rewards').innerHTML = h; });
+    $('#watch-btn').onclick = (e) => { e.target.textContent = toggleWatch(a.id) ? '★ Tracked' : '☆ Track'; };
 
     const names = await bitNames(a, S.lang);
     if (token !== S.viewToken) return;
     renderTodo(a, inf, names, null, null);
+    // Besitz (Account) und Preise der offenen Sammlungs-Items nachladen
+    const openItems = (a.bits || []).map((b, i) => (b.type === 'Item' && !inf.bitsDone.has(i) && !inf.finished ? b.id : null)).filter(Boolean);
+    Promise.all([S.invPromise, openItems.length ? loadPrices(openItems) : null])
+      .then(() => { if (token === S.viewToken) rerenderTodo(); });
 
     try {
       const wiki = await loadWiki(a);
@@ -413,6 +583,39 @@
       return t.outerHTML;
     }
     return best.innerHTML;
+  }
+
+  // Timegate: Tageslimit aus dem Wiki-Text („4 times per day“, „once per day“, „daily“ …)
+  const TIMEGATE_RE = /\b(once|twice|\d+\s*(times?|x))\s*(per|a|each)\s*(day|week)\b|\bper day\b|\bdaily (limit|reset)\b|time-?gated?|timegate|once (per|a) (day|week)|\bper week\b/i;
+  function timegateSentence(content) {
+    if (!content) return null;
+    for (const el of content.querySelectorAll('p, li, dd, td')) {
+      if (el.querySelector('p, li, table')) continue;
+      const text = el.textContent.replace(/\s+/g, ' ').trim();
+      if (text.length < 400 && TIMEGATE_RE.test(text)) {
+        const sentence = text.split(/(?<=[.!?])\s+/).find((x) => TIMEGATE_RE.test(x)) || text;
+        return sentence;
+      }
+    }
+    return null;
+  }
+  function untilReset(now = new Date()) {
+    const reset = Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate() + 1);
+    const min = Math.round((reset - now) / 60000);
+    return `${Math.floor(min / 60)}h ${String(min % 60).padStart(2, '0')}m`;
+  }
+
+  const rerenderTodo = () => { if (S.lastTodo && $('#todo')) { renderTodo(...S.lastTodo); tagChatKinds(); } };
+
+  // Handelsposten-Preise (Cache für die Sitzung)
+  const priceCache = new Map();
+  async function loadPrices(ids) {
+    const missing = ids.filter((id) => !priceCache.has(id));
+    if (missing.length) {
+      const res = await GW2.prices(missing).catch(() => []);
+      for (const id of missing) priceCache.set(id, null);
+      for (const r of res) priceCache.set(r.id, { buy: r.sells?.unit_price || 0, bid: r.buys?.unit_price || 0 });
+    }
   }
 
   // ---------- Orte & Wegmarken ----------
@@ -677,6 +880,7 @@
   // Hauptbereich: nur das, was noch zu tun ist. Erledigtes landet eingeklappt darunter.
   function renderTodo(a, inf, names, content, wikiNames) {
     const el = $('#todo');
+    S.lastTodo = [a, inf, names, content, wikiNames];
     const todo = [];
     const done = [];
     const item = (html, cls = '') => `<li class="${cls}">${html}</li>`;
@@ -708,6 +912,23 @@
       todo.push(item(`<span class="check">🔒</span><div class="grow"><strong>Unlock first:</strong> ${lines.map((l) => `<div>${l}</div>`).join('')}</div>`));
     }
 
+    // Event-Timer (Weltbosse) und Timegate
+    if (!inf.finished) {
+      const timer = Timers.forAchievement(a, S.catOf.get(a.id));
+      if (timer) {
+        todo.push(item(`<span class="check">⏰</span><div class="grow"><strong>${esc(timer.label)}</strong>
+          <div class="sub" style="margin-left:0">${esc(timer.ev.map)} · times are a fixed daily schedule –
+          <a href="${wikiRoute(S.wikiLang, 'Event timers')}">check the wiki event timers</a></div></div>`));
+      }
+      const gate = timegateSentence(content);
+      if (gate) {
+        const p = S.progress.get(a.id);
+        const gained = S.snap && p ? (p.current || 0) - (S.snap.cur[a.id] || 0) : 0;
+        todo.push(item(`<span class="check">⏳</span><div class="grow"><strong>Time-gated:</strong> ${esc(gate)}
+          <div class="sub" style="margin-left:0">${S.account ? (gained > 0 ? `✔ Today: +${gained} progress · ` : 'No progress yet today · ') : ''}daily reset in ${untilReset()} (00:00 UTC)</div></div>`));
+      }
+    }
+
     const bits = a.bits || [];
     const manual = new Set(Store.get(manualKey(a.id), []));
     if (inf.finished) {
@@ -716,8 +937,17 @@
       // 2a. Einzelschritte (Sammlungen, Orte, Story-Kapitel …)
       const doneCount = bits.filter((_, i) => inf.bitsDone.has(i)).length;
       const needed = inf.maxCount && inf.maxCount < bits.length ? inf.maxCount : bits.length;
+      // Kosten der fehlenden, handelbaren Items (bei „x von y“ nur die günstigsten nötigen)
+      const openBits = bits.map((b, i) => ({ b, i })).filter(({ i }) => !inf.bitsDone.has(i));
+      const stillNeeded = Math.max(0, needed - doneCount);
+      const ownedOpen = openBits.filter(({ b }) => b.type === 'Item' && S.inv?.get(b.id)).length;
+      const buyable = openBits.filter(({ b }) => b.type === 'Item' && !S.inv?.get(b.id)).map(({ b }) => priceCache.get(b.id)?.buy).filter(Boolean).sort((x, y) => x - y);
+      const toBuy = Math.max(0, stillNeeded - ownedOpen);
+      const costSum = buyable.slice(0, needed < bits.length ? toBuy : buyable.length).reduce((x, y) => x + y, 0);
+      const costPill = costSum ? `<span class="pill" title="Instant-buy price of the missing tradable items">💰 ≈ ${coins(costSum)} on the TP</span>` : '';
+      const ownPill = ownedOpen ? `<span class="pill ok" title="Open items you already have in your account">✔ ${ownedOpen} already in your account</span>` : '';
       if (S.account) {
-        lead = `<p class="summary"><span class="pill warn">${Math.max(0, needed - doneCount)} left</span>
+        lead = `<p class="summary">${costPill}${ownPill}<span class="pill warn">${Math.max(0, needed - doneCount)} left</span>
           <span class="pill">${doneCount} / ${needed} done</span>
           ${needed < bits.length ? `<span class="muted">– you only need ${needed} of ${bits.length}, pick the easiest.</span>` : ''}</p>`;
       }
@@ -735,14 +965,21 @@
           ${n.type !== 'Text' ? `<a class="sub" href="${wikiRoute(S.wikiLang, wikiLabel)}">Wiki page</a>` : ''}</div>`;
         if (apiDone) { done.push(item(`<span class="check">✔</span><div class="grow">${head}</div>`, 'done')); return; }
         const hint = content ? findWikiHint(content, wikiLabel) : null;
+        const own = n.type === 'Item' ? S.inv?.get(n.id) : null;
+        const price = n.type === 'Item' && !own ? priceCache.get(n.id) : null;
+        const ownLine = own
+          ? `<div class="own">✔ You already have <strong>${own.count}×</strong> (${esc([...own.where].join(', '))}). If it isn't counted yet: right-click the item → <em>Add to achievement</em>.</div>`
+          : '';
+        const priceLine = price?.buy ? `<div class="price">💰 ${coins(price.buy)} on the Trading Post <span class="sub">(buy now)</span></div>` : '';
         const wpLine = n.type === 'Text' ? waypointLine(Geo.locate(wikiLabel)) : '';
         const imgs = content && !(hint && hint.includes('<img')) ? findWikiImages(content, wikiLabel) : '';
         const mark = S.account ? '○' : `<input type="checkbox" class="manual" data-bit="${i}" ${manual.has(i) ? 'checked' : ''} title="Tick off manually (no API key)">`;
         todo.push(item(`<span class="check">${mark}</span><div class="grow">${head}
+          ${ownLine}${priceLine}
           ${wpLine}
           ${hint ? `<div class="hint wiki">${hint}</div>` : ''}
           ${imgs}
-          ${!hint && n.type !== 'Text' ? `<button class="small acq" data-bit="${i}">How do I get this? (wiki)</button><div class="acq-out wiki"></div>` : ''}
+          ${!hint && !own && n.type !== 'Text' ? `<button class="small acq" data-bit="${i}">How do I get this? (wiki)</button><div class="acq-out wiki"></div>` : ''}
           ${!hint && !imgs && n.type === 'Text' && !linked && content ? (findWikiLink(content, wikiLabel)
             ? `<a class="sub" style="margin-left:0" href="${wikiRoute(S.wikiLang, findWikiLink(content, wikiLabel))}">Wiki page: where is it? ›</a>`
             : '<div class="sub" style="margin-left:0">Not matched to a wiki entry automatically – check the full wiki guide below.</div>') : ''}
@@ -934,6 +1171,70 @@
     }));
   }
 
+  // ---------- Karte: „What can I do here?“ ----------
+  async function showMap(mapName) {
+    setNav('map');
+    const token = ++S.viewToken;
+    view.innerHTML = `<h1>🗺️ What can I do here?</h1>
+      <p class="muted">Pick a map – you get your open achievement steps located there, world bosses with timers and achievements that name the map.</p>
+      <div class="searchbox"><input id="map-q" list="map-list" placeholder="Map name, e.g. Bloodtide Coast" autocomplete="off" value="${esc(mapName || Store.get('lastMap', ''))}">
+        <datalist id="map-list"></datalist></div>
+      <div id="map-out"><p class="muted">Loading map data…</p></div>`;
+    try { await Geo.load(S.wikiLang); } catch (e) { $('#map-out').innerHTML = `<p class="err">Could not load map data: ${esc(e.message)}</p>`; return; }
+    if (token !== S.viewToken) return;
+    const maps = Geo.mapsList();
+    $('#map-list').innerHTML = maps.map((m) => `<option value="${esc(m.name)}">${esc(m.region || '')}</option>`).join('');
+    const go = () => {
+      const m = maps.find((x) => norm(x.name) === norm($('#map-q').value));
+      if (m) location.hash = `#/map/${encodeURIComponent(m.name)}`;
+    };
+    $('#map-q').onchange = go;
+    $('#map-q').onkeydown = (e) => { if (e.key === 'Enter') go(); };
+    const out = $('#map-out');
+    if (!mapName) {
+      const last = Store.get('lastMap', '');
+      out.innerHTML = last ? `<p><a href="#/map/${encodeURIComponent(last)}">Last map: ${esc(last)} ›</a></p>` : '<p class="muted">Start typing a map name.</p>';
+      return;
+    }
+    Store.set('lastMap', mapName);
+    if (!S.account) { out.innerHTML = '<p class="muted">Add an API key first so the tool knows what you still need.</p>'; return; }
+
+    const target = norm(mapName);
+    const groups = [];
+    for (const a of S.ach.values()) {
+      const cat = S.catOf.get(a.id);
+      if (!cat) continue;
+      const inf = Progress.info(a, S.progress.get(a.id));
+      if (inf.finished || inf.periodic || inf.remainingAP <= 0) continue;
+      const grp = S.groupOf.get(cat.id);
+      if (/^(historisch|historic)/i.test(grp?.name || '') || /monument/i.test(cat.name)) continue;
+      const steps = [];
+      (a.bits || []).forEach((b, i) => {
+        if (b.type !== 'Text' || !b.text || inf.bitsDone.has(i)) return;
+        const loc = Geo.locate(b.text);
+        if (loc && norm(Geo.mapName(loc.map)) === target) steps.push({ label: b.text, loc });
+      });
+      const timer = Timers.forAchievement(a, cat);
+      const bossHere = timer && norm(timer.ev.map) === target;
+      const named = norm(`${a.name} ${stripTags(a.requirement)}`).includes(target);
+      if (steps.length || bossHere || named) groups.push({ a, inf, steps, timer: bossHere ? timer : null });
+    }
+    groups.sort((x, y) => y.steps.length - x.steps.length || !!y.timer - !!x.timer || y.inf.remainingAP - x.inf.remainingAP);
+    const bosses = Timers.events.filter((e) => norm(e.map) === target).map((e) => Timers.next(e));
+    out.innerHTML = `
+      ${bosses.length ? `<h2>⏰ World bosses here</h2><ul class="list">${bosses.map((t) => `<li class="row">⏰ ${esc(t.label)}</li>`).join('')}</ul>` : ''}
+      <h2>${groups.length} open achievement${groups.length === 1 ? '' : 's'} on ${esc(mapName)}</h2>
+      ${groups.length ? `<ol class="steps">${groups.map(({ a, inf, steps, timer }) => `
+        <li><span class="check">○</span><div class="grow">
+          <a href="#/a/${a.id}"><strong>${esc(a.name)}</strong></a> ${stateBadge(a)}
+          <div class="sub" style="margin-left:0">${esc(nextStepText(a, inf))}</div>
+          ${timer ? `<div class="sub" style="margin-left:0">⏰ ${esc(timer.label)}</div>` : ''}
+          ${steps.length ? `<details ${steps.length <= 3 ? 'open' : ''}><summary>${steps.length} step${steps.length === 1 ? '' : 's'} on this map</summary>
+            ${steps.map((st) => `<div class="map-step"><strong>${esc(st.label)}</strong>${waypointLine(st.loc)}</div>`).join('')}</details>` : ''}
+        </div></li>`).join('')}</ol>` : '<p class="muted">Nothing open found on this map (the tool matches step names with map locations, so some achievements can be missing).</p>'}`;
+    tagChatKinds(out);
+  }
+
   // ---------- Leichte AP ----------
   function computeEasyRows() {
     const rows = [];
@@ -979,6 +1280,14 @@
             <option value="next">Most AP in next tier</option>
             <option value="remaining">Most remaining AP</option>
           </select></label>
+        <label>Reward
+          <select id="f-reward">
+            <option value="">Any</option>
+            <option value="Mastery">⭐ Mastery point</option>
+            <option value="Title">🏷️ Title</option>
+            <option value="Item">🎁 Item</option>
+            <option value="Coins">💰 Gold</option>
+          </select></label>
         <label>Min. progress <input id="f-min" type="range" min="0" max="95" step="5" value="${f.minProgress}"> <span id="f-min-v">${f.minProgress}%</span></label>
         <label><input type="checkbox" id="f-started" ${f.onlyStarted ? 'checked' : ''}> Started only</label>
         <label><input type="checkbox" id="f-locked" ${f.hideLocked ? 'checked' : ''}> Hide locked</label>
@@ -994,6 +1303,8 @@
       <div id="easy-summary" class="muted"></div>
       <div id="easy-table"></div>`;
     $('#f-sort').value = f.sort;
+    $('#f-reward').value = f.reward || '';
+    $('#f-reward').onchange = (e) => { f.reward = e.target.value; update(); };
     const update = () => { Store.set('easyFilters', f); renderEasyTable(); };
     $('#f-sort').onchange = (e) => { f.sort = e.target.value; update(); };
     $('#f-min').oninput = (e) => { f.minProgress = +e.target.value; $('#f-min-v').textContent = `${f.minProgress}%`; update(); };
@@ -1012,6 +1323,17 @@
     renderEasyTable();
   }
 
+  // Kleine Belohnungs-Symbole in der Liste
+  function rewardBadges(a) {
+    const rw = a.rewards || [];
+    const icons = [];
+    const mastery = rw.find((w) => w.type === 'Mastery');
+    if (mastery) icons.push(`<span class="pill" title="Mastery point (${esc(mastery.region)})">⭐ ${esc(mastery.region)}</span>`);
+    if (rw.some((w) => w.type === 'Title')) icons.push('<span class="pill" title="Title">🏷️</span>');
+    if (rw.some((w) => w.type === 'Item')) icons.push('<span class="pill" title="Item reward">🎁</span>');
+    return icons.length ? ` ${icons.join(' ')}` : '';
+  }
+
   function renderEasyTable() {
     const f = S.easy;
     const excluded = new Set(f.excludedGroups);
@@ -1022,6 +1344,7 @@
       !(f.hideHistoric !== false && r.historic) &&
       !(f.hideMeta && r.meta) &&
       !(f.hideGw1 !== false && r.gw1) &&
+      !(f.reward && !(r.a.rewards || []).some((w) => w.type === f.reward)) &&
       !(f.onlyStarted && r.inf.current === 0) &&
       r.inf.frac * 100 >= f.minProgress &&
       !(r.grp && excluded.has(r.grp.id)));
@@ -1041,7 +1364,7 @@
       <thead><tr><th></th><th>Achievement</th><th>Progress</th><th title="Steps to the next tier">Next tier</th><th>Left</th></tr></thead>
       <tbody>${top.map((r) => `<tr onclick="location.hash='#/a/${r.a.id}'">
         <td>${achIcon(r.a)}</td>
-        <td><a href="#/a/${r.a.id}">${esc(r.a.name)}</a>${r.locked ? ' <span class="pill warn" title="Prerequisite/unlock missing">🔒</span>' : ''}${r.meta ? ' <span class="pill" title="Requires several other achievements in this category">Meta</span>' : ''}
+        <td><a href="#/a/${r.a.id}">${esc(r.a.name)}</a>${r.locked ? ' <span class="pill warn" title="Prerequisite/unlock missing">🔒</span>' : ''}${r.meta ? ' <span class="pill" title="Requires several other achievements in this category">Meta</span>' : ''}${rewardBadges(r.a)}
           <div class="sub">${catPath(r.a)}</div></td>
         <td class="prog">${bar(r.inf.frac)}<span class="sub">${r.inf.current}/${r.inf.maxCount}</span></td>
         <td><strong>+${r.inf.next.points} AP</strong><div class="sub">${r.inf.next.steps} to go</div></td>
@@ -1062,7 +1385,9 @@
       S.key = key;
       Store.set('apiKey', key);
       await loadProgress();
-      info.innerHTML = `<span class="ok-text">✔ Key “${esc(t.name)}” saved – progress for ${S.progress.size} achievements loaded.</span>`;
+      const extra = ['inventories', 'characters'].filter((p) => !t.permissions.includes(p));
+      info.innerHTML = `<span class="ok-text">✔ Key “${esc(t.name)}” saved – progress for ${S.progress.size} achievements loaded.</span>
+        ${extra.length ? `<br><span class="muted">Tip: add ${extra.map((x) => `<code>${x}</code>`).join(' + ')} to see which collection items you already own.</span>` : ''}`;
       return true;
     } catch (e) {
       info.innerHTML = `<span class="err">Invalid key: ${esc(e.message)}</span>`;
@@ -1076,6 +1401,7 @@
       <p class="muted">So the tool knows what you already have: create a key on
         <a href="https://account.arena.net/applications" target="_blank" rel="noopener">account.arena.net/applications</a>
         with the permissions <code>account</code> and <code>progression</code> and paste it here.
+        Optional: add <code>inventories</code> and <code>characters</code> so the tool can see which collection items you already own.
         It is only stored locally and only sent to the official GW2 API.</p>
       <div class="key-row">
         <input id="home-key" type="password" placeholder="Paste API key here (Ctrl+V)" autocomplete="off">
@@ -1093,8 +1419,9 @@
       <div class="card">
         <h2>GW2 API key</h2>
         <p class="muted">Create a key on <a href="https://account.arena.net/applications" target="_blank" rel="noopener">account.arena.net/applications</a>
-          with the permissions <code>account</code> and <code>progression</code>. The key is only stored locally in your browser
-          and only sent to api.guildwars2.com.</p>
+          with the permissions <code>account</code> and <code>progression</code>.
+          Optional: <code>inventories</code> + <code>characters</code> – shows collection items you already own (bank, materials, bags).
+          The key is only stored locally in your browser and only sent to api.guildwars2.com.</p>
         <input id="s-key" type="password" placeholder="XXXXXXXX-XXXX-…" value="${esc(S.key)}" autocomplete="off">
         <div class="row-btns"><button id="s-save">Save & check</button><button id="s-clear" class="secondary">Remove key</button></div>
         <div id="s-key-info" class="muted"></div>
@@ -1107,6 +1434,11 @@
         <label>Wiki <select id="s-wiki">
           <option value="en">English (more complete, recommended)</option><option value="de">Deutsch</option>
         </select></label>
+      </div>
+      <div class="card">
+        <h2>AP goal</h2>
+        <label>Goal <input id="s-goal" type="number" min="1" step="500" value="${Store.get('apGoal', 30000)}"> AP</label>
+        <p class="muted">Shown on the start page with a progress bar and an estimate based on your daily AP history.</p>
       </div>
       <div class="card">
         <h2>Data</h2>
@@ -1129,6 +1461,7 @@
       await loadStatic();
       renderAccount();
     };
+    $('#s-goal').onchange = (e) => { const v = Math.max(1, +e.target.value || 30000); Store.set('apGoal', v); toast(`Goal set to ${v.toLocaleString('en-US')} AP.`); };
     $('#s-wiki').onchange = (e) => {
       S.wikiLang = e.target.value;
       Store.set('wikiLang2', S.wikiLang);
@@ -1153,6 +1486,7 @@
     if (wm) showWikiPage(wm[1], decodeURIComponent(wm[2]));
     else if (h.startsWith('/a/')) showAchievement(+h.slice(3));
     else if (h === '/easy') showEasy();
+    else if (h === '/map' || h.startsWith('/map/')) showMap(h.length > 5 ? decodeURIComponent(h.slice(5)) : '');
     else if (h === '/settings') showSettings();
     else showSearch();
   }

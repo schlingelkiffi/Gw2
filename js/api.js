@@ -117,5 +117,11 @@ const GW2 = (() => {
     tokenInfo: (key) => get('/tokeninfo', { access_token: key }),
     account: (key) => get('/account', { access_token: key }),
     accountAchievements: (key) => get('/account/achievements', { access_token: key }),
+    bank: (key) => get('/account/bank', { access_token: key }),
+    materials: (key) => get('/account/materials', { access_token: key }),
+    sharedInventory: (key) => get('/account/inventory', { access_token: key }),
+    characters: (key) => get('/characters', { access_token: key, ids: 'all' }),
+    // Handelsposten-Preise (ohne Key); gebundene Items fehlen einfach in der Antwort
+    prices: (ids) => getMany('/commerce/prices', ids),
   };
 })();
