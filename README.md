@@ -13,7 +13,7 @@ Ein Web-Tool für Guild-Wars-2-Erfolge, das komplett im Browser läuft. Oberflä
 ## Weitere Funktionen
 
 - **Tracked (Merkliste):** Erfolge mit „☆ Track“ anheften; die Startseite zeigt sie mit Fortschritt und nächstem Schritt.
-- **AP-Ziel & Prognose:** Die Startseite zeigt deinen AP-Verlauf (täglich gespeichert) und schätzt, wann du dein Ziel erreichst (Standard 30.000, unter *Settings* änderbar).
+- **Fortschritt:** Die Startseite zeigt deinen AP-Verlauf (täglich lokal gespeichert): heute, letzte 7 Tage, Schnitt pro Tag und eine Verlaufskurve.
 - **Items im Account:** Mit den Key-Rechten `inventories` + `characters` zeigt das Tool bei Sammlungen, welche Items schon in Bank, Materiallager oder Taschen liegen.
 - **Handelsposten-Kosten:** Preis der fehlenden handelbaren Items (Sofortkauf), bei „x von y“ die günstigsten nötigen.
 - **Map:** Karte wählen und alle offenen Schritte dort sehen – mit Wegmarken, Weltbossen und Timern.

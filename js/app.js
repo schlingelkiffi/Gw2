@@ -232,51 +232,47 @@
     return `<h2>📌 Tracked</h2><ul class="list tracked">${rows.join('')}</ul>`;
   }
 
-  // AP-Verlauf & Prognose bis zum Ziel
-  function forecast() {
+  // AP-Verlauf: heute, letzte 7 Tage, Schnitt pro Tag
+  function apStats() {
     const hist = Store.get('apHistory', {});
     const days = Object.keys(hist).sort();
-    const goal = Store.get('apGoal', 30000);
     if (!days.length) return null;
+    const dayMs = 86400000;
     const last = days[days.length - 1];
     const cur = hist[last];
-    const dayMs = 86400000;
+    // Stand an einem Tag X vor heute (letzter bekannter Wert davor)
+    const valueDaysAgo = (n) => {
+      const cutoff = Date.parse(last) - n * dayMs;
+      const before = days.filter((d) => Date.parse(d) <= cutoff);
+      return before.length ? hist[before[before.length - 1]] : null;
+    };
+    const yesterday = valueDaysAgo(1);
+    const weekAgo = valueDaysAgo(7);
     const recent = days.filter((d) => (Date.parse(last) - Date.parse(d)) / dayMs <= 30);
-    const first = recent[0];
-    const span = (Date.parse(last) - Date.parse(first)) / dayMs;
-    const rate = span >= 1 ? (cur - hist[first]) / span : null;
-    const remaining = goal - cur;
-    let eta = null;
-    if (remaining > 0 && rate > 0) eta = new Date(Date.now() + Math.ceil(remaining / rate) * dayMs);
-    return { hist, days, goal, cur, rate, span, remaining, eta };
+    const span = (Date.parse(last) - Date.parse(recent[0])) / dayMs;
+    const rate = span >= 1 ? (cur - hist[recent[0]]) / span : null;
+    return { hist, days, cur, today: yesterday === null ? null : cur - yesterday, week: weekAgo === null ? null : cur - weekAgo, rate, span };
   }
 
   function progressCardHtml() {
-    const f = S.account ? forecast() : null;
-    if (!f) return '';
-    const frac = Math.min(1, f.cur / f.goal);
-    let text;
-    if (f.remaining <= 0) text = `🎉 Goal of ${f.goal.toLocaleString('en-US')} AP reached!`;
-    else if (f.rate === null) text = `${f.remaining.toLocaleString('en-US')} AP to go. Come back on another day – from the second day on the tool estimates when you'll get there.`;
-    else if (f.rate <= 0) text = `${f.remaining.toLocaleString('en-US')} AP to go. No AP gained over the last ${Math.round(f.span)} day(s) – no estimate yet.`;
-    else {
-      const days = Math.ceil(f.remaining / f.rate);
-      text = `${f.remaining.toLocaleString('en-US')} AP to go · ≈ ${Math.round(f.rate).toLocaleString('en-US')} AP/day over the last ${Math.round(f.span)} day(s)
-        → around <strong>${f.eta.toLocaleDateString('en-GB', { day: 'numeric', month: 'short', year: 'numeric' })}</strong> (in ${days} day${days === 1 ? '' : 's'}).`;
-    }
+    const st = S.account ? apStats() : null;
+    if (!st) return '';
+    const fmt = (n) => (n === null ? '–' : `${n >= 0 ? '+' : ''}${Math.round(n).toLocaleString('en-US')}`);
     return `<div class="card progress-card">
-      <div class="hero-row"><div class="big-num">${f.cur.toLocaleString('en-US')}<span> / ${f.goal.toLocaleString('en-US')} AP</span></div>
-        <a class="sub" href="#/settings">change goal</a></div>
-      ${bar(frac)}
-      <p class="muted">${text}</p>
-      ${f.days.length >= 2 ? `<div class="spark" id="spark"></div>` : ''}
+      <div class="big-num">${st.cur.toLocaleString('en-US')}<span> AP</span></div>
+      <div class="stat-row">
+        <div><strong>${fmt(st.today)}</strong><span>today</span></div>
+        <div><strong>${fmt(st.week)}</strong><span>last 7 days</span></div>
+        <div><strong>${st.rate === null ? '–' : `≈ ${Math.round(st.rate).toLocaleString('en-US')}`}</strong><span title="Average over the last ${Math.round(st.span)} day(s)">avg AP / day</span></div>
+      </div>
+      ${st.days.length >= 2 ? '<div class="spark" id="spark"></div>' : '<p class="muted">Your AP is saved once a day – the history chart appears from the second day on.</p>'}
     </div>`;
   }
 
   // Kleine Verlaufskurve (eine Reihe, keine Legende) mit Hover/Tap-Tooltip
   function drawSpark() {
     const el = $('#spark');
-    const f = forecast();
+    const f = apStats();
     if (!el || !f || f.days.length < 2) return;
     const pts = f.days.slice(-60).map((d) => ({ d, v: f.hist[d] }));
     const W = 320, H = 70, P = 4;
@@ -1436,11 +1432,6 @@
         </select></label>
       </div>
       <div class="card">
-        <h2>AP goal</h2>
-        <label>Goal <input id="s-goal" type="number" min="1" step="500" value="${Store.get('apGoal', 30000)}"> AP</label>
-        <p class="muted">Shown on the start page with a progress bar and an estimate based on your daily AP history.</p>
-      </div>
-      <div class="card">
         <h2>Data</h2>
         <p class="muted">Achievement data is cached locally for one week.</p>
         <button id="s-refresh" class="secondary">Reload achievement data now</button>
@@ -1461,7 +1452,6 @@
       await loadStatic();
       renderAccount();
     };
-    $('#s-goal').onchange = (e) => { const v = Math.max(1, +e.target.value || 30000); Store.set('apGoal', v); toast(`Goal set to ${v.toLocaleString('en-US')} AP.`); };
     $('#s-wiki').onchange = (e) => {
       S.wikiLang = e.target.value;
       Store.set('wikiLang2', S.wikiLang);
