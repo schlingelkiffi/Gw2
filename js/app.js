@@ -912,9 +912,9 @@
     if (!inf.finished) {
       const timer = Timers.forAchievement(a, S.catOf.get(a.id));
       if (timer) {
-        todo.push(item(`<span class="check">⏰</span><div class="grow"><strong>${esc(timer.label)}</strong>
-          <div class="sub" style="margin-left:0">${esc(timer.ev.map)} · times are a fixed daily schedule –
-          <a href="${wikiRoute(S.wikiLang, 'Event timers')}">check the wiki event timers</a></div></div>`));
+        todo.push(item(`<span class="check">${timer.running ? '🔥' : '⏰'}</span><div class="grow"><strong>${esc(timer.label)}</strong>
+          <div class="sub" style="margin-left:0">${esc(timer.map)} ${chatBtn(timer.chat)}
+          · <a href="#/timers">all timers</a></div></div>`));
       }
       const gate = timegateSentence(content);
       if (gate) {
@@ -1168,14 +1168,16 @@
   }
 
   // ---------- Event-Timer ----------
-  function showTimers() {
+  async function showTimers() {
     setNav('timers');
     const token = ++S.viewToken;
-    view.innerHTML = `<h1>⏰ World boss timers</h1>
-      <p class="muted">Next spawns in your local time. Fixed daily schedule –
-        <a href="${wikiRoute(S.wikiLang, 'Event timers')}">compare with the wiki event timers</a>.</p>
-      <div id="timer-list"></div>`;
-    // Offene Erfolge je Boss (einmal berechnen)
+    view.innerHTML = `<h1>⏰ Event timers</h1>
+      <p class="muted">World bosses and map metas by expansion, in your local time. Tap a chat code to copy it and paste it into the in-game chat.</p>
+      <div id="timer-list"><p class="muted">Loading timers…</p></div>`;
+    await Timers.load();
+    Geo.load(S.wikiLang).catch(() => {});
+    if (token !== S.viewToken) return;
+    // Offene Erfolge je Event-Segment
     const open = new Map();
     if (S.account) {
       for (const a of S.ach.values()) {
@@ -1184,27 +1186,52 @@
         const inf = Progress.info(a, S.progress.get(a.id));
         if (inf.finished || inf.periodic || inf.remainingAP <= 0) continue;
         const t = Timers.forAchievement(a, cat);
-        if (t) (open.get(t.ev.name) || open.set(t.ev.name, []).get(t.ev.name)).push(a);
+        if (!t) continue;
+        const key = `${t.section.name}|${t.seg.name}`;
+        (open.get(key) || open.set(key, []).get(key)).push(a);
       }
     }
+    const expanded = new Set(Store.get('timerOpen', []));
     const render = () => {
       if (token !== S.viewToken) return;
       const now = new Date();
-      const list = Timers.events.map((ev) => Timers.next(ev, now))
-        .sort((x, y) => (y.running - x.running) || (x.start - y.start));
-      $('#timer-list').innerHTML = `<ol class="steps">${list.map((t) => {
-        const achs = open.get(t.ev.name) || [];
-        return `<li class="${t.running ? 'running' : ''}"><span class="check">${t.running ? '🔥' : '⏰'}</span><div class="grow">
-          <strong>${esc(t.ev.name)}</strong> <span class="sub">${esc(t.ev.map)}</span>
-          <div>${esc(t.label.replace(`${t.ev.name} – `, '').replace(`${t.ev.name} `, ''))}</div>
-          ${achs.length ? `<details><summary>${achs.length} open achievement${achs.length === 1 ? '' : 's'}</summary>
-            ${achs.map((a) => `<div><a href="#/a/${a.id}">${esc(a.name)}</a> ${stateBadge(a)}</div>`).join('')}</details>` : ''}
-        </div></li>`;
-      }).join('')}</ol>`;
+      const cats = new Map();
+      for (const sec of Timers.sections) (cats.get(sec.category) || cats.set(sec.category, []).get(sec.category)).push(sec);
+      const html = [...cats.entries()].map(([cat, secs]) => {
+        const rows = secs.map((sec) => ({ sec, st: Timers.status(sec, now) }))
+          .sort((x, y) => (sec2name(x.sec)).localeCompare(sec2name(y.sec)));
+        const running = rows.reduce((n, r) => n + r.st.filter((x) => x.running).length, 0);
+        const soonest = rows.flatMap((r) => r.st.filter((x) => !x.running).map((x) => ({ ...x, sec: r.sec }))).sort((x, y) => x.start - y.start)[0];
+        const body = rows.map(({ sec, st }) => `
+          <div class="timer-map"><h3>${esc(sec2name(sec))}</h3>
+            ${st.map((x) => {
+              const achs = open.get(`${sec.name}|${x.seg.name}`) || [];
+              return `<div class="timer-row ${x.running ? 'running' : ''}">
+                <span class="t-icon">${x.running ? '🔥' : '⏰'}</span>
+                <div class="grow"><strong>${esc(x.seg.name)}</strong> ${chatBtn(x.seg.chatlink)}
+                  <div class="sub" style="margin-left:0">${esc(x.label)}</div>
+                  ${achs.length ? `<details><summary>${achs.length} open achievement${achs.length === 1 ? '' : 's'}</summary>
+                    ${achs.map((a) => `<div><a href="#/a/${a.id}">${esc(a.name)}</a> ${stateBadge(a)}</div>`).join('')}</details>` : ''}
+                </div></div>`;
+            }).join('')}
+          </div>`).join('');
+        return `<details class="box timer-cat" data-cat="${esc(cat)}" ${expanded.has(cat) ? 'open' : ''}>
+          <summary>${esc(cat)} <span class="sub">${running ? `🔥 ${running} running` : ''}${running && soonest ? ' · ' : ''}${soonest ? `next: ${esc(soonest.seg.name)} ${esc(soonest.label.replace(/^next at /, ''))}` : ''}</span></summary>
+          ${body}</details>`;
+      }).join('');
+      const list = $('#timer-list');
+      list.innerHTML = html + `<p class="muted">Source: ${Timers.source === 'wiki' ? 'Guild Wars 2 Wiki event timers' : Timers.source === 'github' ? 'gw2-api-event-timers (based on the wiki timers)' : 'built-in world boss schedule'} ·
+        <a href="${wikiRoute(S.wikiLang, 'Event timers')}">wiki event timers</a></p>`;
+      list.querySelectorAll('details.timer-cat').forEach((d) => d.addEventListener('toggle', () => {
+        d.open ? expanded.add(d.dataset.cat) : expanded.delete(d.dataset.cat);
+        Store.set('timerOpen', [...expanded]);
+      }));
+      tagChatKinds(list);
     };
+    // Abschnittsname = Karte; bei „World bosses“ o. ä. bleibt der Abschnittsname
+    const sec2name = (sec) => sec.map || sec.name;
     render();
-    // Countdown aktuell halten, solange die Seite offen ist
-    const timer = setInterval(() => (token === S.viewToken ? render() : clearInterval(timer)), 30000);
+    const iv = setInterval(() => (token === S.viewToken ? render() : clearInterval(iv)), 30000);
   }
 
   // ---------- Leichte AP ----------
@@ -1477,6 +1504,10 @@
 
   async function init() {
     loadMapIcons();
+    Timers.load().then(() => {
+      const h = location.hash;
+      if (!h || h === '#/' || h.startsWith('#/a/')) (h.startsWith('#/a/') ? rerenderTodo() : route());
+    });
     try {
       await loadStatic();
     } catch (e) {

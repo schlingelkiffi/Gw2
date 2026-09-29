@@ -210,5 +210,12 @@ const Wiki = (() => {
     };
   }
 
-  return { base, pageUrl, searchUrl, findPage, parse, page, sanitize, acquisition, fullImageUrl, mapIcons };
+  // Rohinhalt einer Wiki-Seite (z. B. JSON-Daten eines Widgets)
+  async function rawContent(title, lang = 'en') {
+    const j = await api(lang, { action: 'query', prop: 'revisions', rvprop: 'content', rvslots: 'main', titles: title });
+    const rev = j.query?.pages?.[0]?.revisions?.[0];
+    return rev?.slots?.main?.content ?? rev?.content ?? null;
+  }
+
+  return { base, pageUrl, searchUrl, findPage, parse, page, sanitize, acquisition, fullImageUrl, mapIcons, rawContent };
 })();
