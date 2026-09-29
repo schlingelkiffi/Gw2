@@ -350,13 +350,20 @@
   }
 
   // Meta-Erfolg: keine Einzelschritte, Anforderung verweist auf andere Erfolge der Kategorie.
-  const META_RE = /erfolg|achievement|succès|succes|logro/i;
+  // Plural („10 achievements in …“) – ein einzelnes „achievement“ im Text reicht nicht.
+  const META_RE = /achievements|erfolge\b|succès|logros/i;
   function categoryIds(cat) {
     return (cat?.achievements || []).map((e) => (typeof e === 'object' ? e.id : e));
   }
   function isMeta(a) {
+    if ((a.bits || []).length) return false;
     const cat = S.catOf.get(a.id);
-    return !(a.bits || []).length && META_RE.test(stripTags(a.requirement)) && categoryIds(cat).length > 2;
+    const others = categoryIds(cat).length - 1;
+    const req = stripTags(a.requirement);
+    const needed = Math.max(0, ...(a.tiers || []).map((t) => t.count));
+    // Zählt Erfolge der eigenen Kategorie: Plural-Wort bzw. Kategoriename in der Anforderung,
+    // und die benötigte Anzahl passt zur Zahl der anderen Erfolge der Kategorie.
+    return (META_RE.test(req) || (cat && req.includes(cat.name))) && needed > 1 && needed <= others;
   }
 
   // Sucht im Wiki-Inhalt das kleinste Element (Tabellenzeile, Listeneintrag, …), das den Text enthält.
