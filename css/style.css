@@ -169,9 +169,14 @@ button.chatlink {
   font: .85em/1.3 ui-monospace, Consolas, monospace; font-weight: 500; padding: .05rem .4rem; margin: 0 .1rem;
   background: #2a2413; color: var(--accent-2); border: 1px dashed var(--accent); border-radius: 4px; cursor: copy;
 }
-button.chatlink::before { content: "📋 "; }
+button.chatlink::before { content: ""; display: inline-block; width: 1.05em; height: 1.05em; margin-right: .3em; vertical-align: -0.18em; background: center / contain no-repeat url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M6.5 9.5 9.5 6.5M7 4.5l1.3-1.3a2.8 2.8 0 0 1 4 4L11 8.5M9 11.5l-1.3 1.3a2.8 2.8 0 0 1-4-4L5 7.5' stroke='%23f0c060' stroke-width='1.6' fill='none' stroke-linecap='round'/%3E%3C/svg%3E"); }
+button.chatlink.k-waypoint::before { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M8 .8 15.2 8 8 15.2.8 8z' fill='%231d6fd8' stroke='%239fd0ff' stroke-width='1.2'/%3E%3Cpath d='M8 4.6 11.4 8 8 11.4 4.6 8z' fill='%23e8f4ff'/%3E%3C/svg%3E"); }
+button.chatlink.k-landmark::before { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M8 2.5 13.5 8 8 13.5 2.5 8z' fill='%23c9a14a' stroke='%235a3d10' stroke-width='1.3'/%3E%3C/svg%3E"); }
+button.chatlink.k-vista::before { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M8 1.8 15 14H1z' fill='%23d8452f' stroke='%23ffb199' stroke-width='1'/%3E%3Ccircle cx='8' cy='10' r='1.8' fill='%23fff2e0'/%3E%3C/svg%3E"); }
+button.chatlink.k-area::before, button.chatlink.k-map::before, button.chatlink.k-unlock::before { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Cpath d='M8 1a5 5 0 0 0-5 5c0 3.8 5 9 5 9s5-5.2 5-9a5 5 0 0 0-5-5z' fill='%23e07a3f'/%3E%3Ccircle cx='8' cy='6' r='1.9' fill='%23fff'/%3E%3C/svg%3E"); }
+button.chatlink.k-item::before, button.chatlink.k-skill::before { background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 16 16'%3E%3Crect x='2' y='4' width='12' height='10' rx='1.5' fill='%23a0703a' stroke='%23f0c060' stroke-width='1'/%3E%3Cpath d='M2 7.5h12M8 4v10' stroke='%23f0c060' stroke-width='1'/%3E%3C/svg%3E"); }
+button.chatlink.copied::before { background-image: none; content: "✔"; width: auto; height: auto; vertical-align: baseline; }
 button.chatlink.copied { background: var(--ok); color: #0c1a0c; border-style: solid; }
-button.chatlink.copied::before { content: "✔ "; }
 
 /* Bilder & Galerien aus dem Wiki */
 .wiki img { cursor: zoom-in; border-radius: 3px; }

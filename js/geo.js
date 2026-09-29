@@ -44,6 +44,10 @@ const Geo = (() => {
         world = reduce(floor);
         DB.set(key, { v: CACHE_VERSION, ts: Date.now(), data: world });
       }
+      // Chat-Code -> Art (für das passende Symbol vor jedem Code)
+      world.byChat = new Map();
+      for (const w of world.waypoints) if (w.chat) world.byChat.set(w.chat, 'waypoint');
+      for (const p of world.places) if (p.chat && !world.byChat.has(p.chat)) world.byChat.set(p.chat, p.kind);
       // Namensindex: Wegmarken selbst, Sehenswürdigkeiten und Gebiete
       world.byName = new Map();
       for (const w of world.waypoints) world.byName.set(norm(w.name), { kind: 'waypoint', ...w });
@@ -78,8 +82,18 @@ const Geo = (() => {
   const nearestWaypoint = (place) => (place?.kind === 'waypoint' ? place : nearest(place, 'waypoint'));
 
   const mapName = (id) => world?.maps[id]?.name || '';
+
+  // Art eines Chat-Codes: aus den Kartendaten, sonst anhand des Typ-Bytes (0x02 = Gegenstand, 0x04 = Kartenpunkt)
+  function kindOfChat(code) {
+    const known = world?.byChat.get(code);
+    if (known) return known;
+    try {
+      const type = atob(code.slice(2, -1)).charCodeAt(0);
+      return { 2: 'item', 4: 'map', 11: 'item', 10: 'item', 7: 'skill', 6: 'item' }[type] || 'other';
+    } catch { return 'other'; }
+  }
   // Ganze Karten (z. B. „Amnytas“) sind als Ziel zu grob
   const isMap = (name) => !!world && Object.values(world.maps).some((m) => norm(m.name) === norm(name));
 
-  return { load, locate, nearest, nearestWaypoint, mapName, isMap, get ready() { return !!world; } };
+  return { load, locate, nearest, nearestWaypoint, mapName, isMap, kindOfChat, get ready() { return !!world; } };
 })();

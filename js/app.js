@@ -410,7 +410,15 @@
   }
 
   // ---------- Orte & Wegmarken ----------
-  const chatBtn = (code) => (code ? `<button type="button" class="chatlink" data-code="${esc(code)}" title="Copy and paste into the in-game chat">${esc(code)}</button>` : '');
+  const CHAT_TITLES = { waypoint: 'Waypoint', landmark: 'Point of interest', vista: 'Vista', area: 'Area', item: 'Item', map: 'Map location' };
+  const chatBtn = (code, kind = Geo.kindOfChat(code)) => (code
+    ? `<button type="button" class="chatlink k-${kind}" data-code="${esc(code)}" title="${CHAT_TITLES[kind] || 'Chat link'} – tap to copy, paste into the in-game chat">${esc(code)}</button>`
+    : '');
+
+  // Chat-Codes aus dem Wiki bekommen nachträglich ihr Symbol, sobald die Kartendaten da sind
+  function tagChatKinds(root = document) {
+    root.querySelectorAll('button.chatlink:not([class*="k-"])').forEach((b) => b.classList.add(`k-${Geo.kindOfChat(b.dataset.code)}`));
+  }
 
   // Ort mit Art + eigenem Chat-Code, dazu nächste Wegmarke und nächste Sehenswürdigkeit
   const KIND = {
@@ -420,14 +428,14 @@
   const kindLabel = (k) => KIND[k] || ['📍', k || 'Location'];
   function waypointLine(place) {
     if (!place) return '';
-    const [icon, label] = kindLabel(place.kind);
-    const lines = [`${icon} ${label}: <strong>${esc(place.name)}</strong>${place.kind === 'waypoint' ? '' : `, ${esc(Geo.mapName(place.map))}`} ${chatBtn(place.chat)}`];
+    const [, label] = kindLabel(place.kind);
+    const lines = [`${label}: <strong>${esc(place.name)}</strong>${place.kind === 'waypoint' ? '' : `, ${esc(Geo.mapName(place.map))}`} ${chatBtn(place.chat)}`];
     for (const kind of ['waypoint', 'landmark']) {
       if (place.kind === kind) continue;
       const n = Geo.nearest(place, kind);
       if (!n) continue;
-      const [ni, nl] = kindLabel(kind);
-      lines.push(`${ni} Nearest ${nl.toLowerCase()}: <strong>${esc(n.name)}</strong> ${chatBtn(n.chat)}`);
+      const [, nl] = kindLabel(kind);
+      lines.push(`Nearest ${nl.toLowerCase()}: <strong>${esc(n.name)}</strong> ${chatBtn(n.chat)}`);
     }
     return `<div class="wp">${lines.join('<br>')}</div>`;
   }
@@ -473,6 +481,7 @@
     try { await Geo.load(S.wikiLang); } catch (e) { console.warn('Geo', e); return; }
     if (token !== S.viewToken) return;
     renderTodo(a, inf, names, content, wikiNames); // Schritte bekommen jetzt ihre Wegmarken
+    tagChatKinds();
 
     const skip = new Set([norm(pageTitle), norm(a.name), ...(wikiNames || names).map((n) => norm(n.label))]);
     const titles = [...new Set([...content.querySelectorAll('a[data-wiki]')].map((l) => l.dataset.wiki))]
@@ -489,6 +498,7 @@
       return `<li><span class="check">📍</span><div class="grow"><a href="${wikiRoute(S.wikiLang, t)}">${esc(t)}</a>
         ${line}</div></li>`;
     }).filter(Boolean);
+    tagChatKinds();
     el.innerHTML = rows.length ? `<h2>📍 Where to go</h2><ol class="steps">${rows.join('')}</ol>
       <p class="muted">Tap a chat code to copy it, paste it into the in-game chat and click it to see the spot on your map.</p>` : '';
   }
@@ -785,6 +795,7 @@
       const el = $('#wiki-page');
       el.innerHTML = '';
       renderSections(el, content, true);
+      Geo.load(S.wikiLang).then(() => tagChatKinds(el)).catch(() => tagChatKinds(el));
       if (anchor) document.getElementById(anchor)?.scrollIntoView();
     } catch (e) {
       if (token !== S.viewToken) return;

@@ -1,5 +1,5 @@
 // Service Worker: hält die App-Dateien offline verfügbar. API- und Wiki-Anfragen gehen immer ins Netz.
-const CACHE = 'gw2-achievements-v9';
+const CACHE = 'gw2-achievements-v10';
 const SHELL = [
   './', 'index.html', 'css/style.css', 'manifest.webmanifest',
   'js/db.js', 'js/api.js', 'js/progress.js', 'js/wiki.js', 'js/geo.js', 'js/app.js',
