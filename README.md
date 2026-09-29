@@ -1,6 +1,6 @@
-# GW2 Erfolgs-Helfer
+# GW2 Achievement Helper
 
-Ein Web-Tool für Guild-Wars-2-Erfolge, das komplett im Browser läuft:
+Ein Web-Tool für Guild-Wars-2-Erfolge, das komplett im Browser läuft. Oberfläche und Spieldaten sind auf Englisch; die Spielsprache kannst du unter *Settings* umstellen.
 
 - **Suche**: Du findest jeden Erfolg über Name, Beschreibung oder ID.
 - **Run-Through**: Für einen Erfolg siehst du
@@ -19,7 +19,7 @@ Das Programm bietet zusätzlich zur Web-Version:
 - **Chat-Codes** wie `[&BDAEAAA=]` (Wegmarken, Sehenswürdigkeiten) kopierst du per Klick und fügst sie im Spiel mit Strg+V in den Chat ein. Im Chat klickst du den Link an, dann zeigt dir die Karte den Ort.
 - Links auf andere Seiten öffnen sich im normalen Browser.
 
-**Herunterladen:** Auf GitHub unter *Actions* → *Desktop-App bauen* → neuester Lauf → Artefakt **GW2-Erfolgs-Helfer-win**.
+**Herunterladen:** Auf GitHub unter *Actions* → *Desktop-App bauen* → neuester Lauf → Artefakt **GW2-Achievement-Helper-win**.
 Das ZIP enthält den Installer (`…-Setup-….exe`) und eine portable Version (`…-Portable-….exe`, läuft ohne Installation).
 Wenn du einen Tag `v…` pushst (z. B. `v0.1.0`), hängt der Workflow die Dateien außerdem an ein GitHub-Release.
 

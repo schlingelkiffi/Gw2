@@ -20,13 +20,13 @@ const GW2 = (() => {
         continue;
       }
       if (res.status === 429 || res.status >= 500) {
-        lastErr = new Error(`GW2-API antwortet mit HTTP ${res.status}`);
+        lastErr = new Error(`GW2 API responded with HTTP ${res.status}`);
         await sleep(1000 * 2 ** attempt);
         continue;
       }
       const body = await res.json().catch(() => null);
       if (!res.ok) {
-        const err = new Error((body && body.text) || `HTTP ${res.status} bei ${path}`);
+        const err = new Error((body && body.text) || `HTTP ${res.status} for ${path}`);
         err.status = res.status;
         throw err;
       }
@@ -68,11 +68,11 @@ const GW2 = (() => {
       const cached = await DB.get(key);
       if (cached && Date.now() - cached.ts < STATIC_MAX_AGE) return cached;
     }
-    onProgress?.('Lade Erfolgs-IDs…', 0);
+    onProgress?.('Loading achievement IDs…', 0);
     const ids = await get('/achievements');
     const achievements = await getMany('/achievements', ids, { lang }, (d, t) =>
-      onProgress?.(`Lade Erfolge… (${d}/${t})`, d / t));
-    onProgress?.('Lade Kategorien…', 1);
+      onProgress?.(`Loading achievements… (${d}/${t})`, d / t));
+    onProgress?.('Loading categories…', 1);
     const [categories, groups] = await Promise.all([
       get('/achievements/categories', { ids: 'all', lang }),
       get('/achievements/groups', { ids: 'all', lang }),

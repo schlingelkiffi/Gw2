@@ -13,9 +13,9 @@ const Wiki = (() => {
     const all = { format: 'json', formatversion: '2', origin: '*', ...params };
     for (const [k, v] of Object.entries(all)) url.searchParams.set(k, v);
     const res = await fetch(url);
-    if (!res.ok) throw new Error(`Wiki antwortet mit HTTP ${res.status}`);
+    if (!res.ok) throw new Error(`Wiki responded with HTTP ${res.status}`);
     const j = await res.json();
-    if (j.error) throw new Error(j.error.info || 'Wiki-Fehler');
+    if (j.error) throw new Error(j.error.info || 'Wiki error');
     return j;
   }
 
@@ -118,7 +118,7 @@ const Wiki = (() => {
     btn.type = 'button';
     btn.className = 'chatlink';
     btn.dataset.code = code;
-    btn.title = 'Kopieren und im Spiel in den Chat einfügen';
+    btn.title = 'Copy and paste into the in-game chat';
     btn.textContent = code;
     return btn;
   }

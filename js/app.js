@@ -1,8 +1,8 @@
 // Haupt-App: Laden, Routing, Suche, Erfolgs-Run-Through, Leichte-AP-Finder.
 (() => {
   const S = {
-    lang: Store.get('lang', 'de'),
-    wikiLang: Store.get('wikiLang', 'en'),
+    lang: Store.get('gameLang', 'en'),
+    wikiLang: Store.get('wikiLang2', 'en'),
     key: Store.get('apiKey', ''),
     ach: new Map(),
     catOf: new Map(), // achId -> category
@@ -19,6 +19,7 @@
       onlyStarted: false, minProgress: 0, excludedGroups: [],
     }),
     wikiCache: new Map(),
+    wikiReq: new Map(), // achId -> Anforderungstext aus dem Wiki (wenn die API keine liefert)
   };
 
   const $ = (sel, root = document) => root.querySelector(sel);
@@ -74,14 +75,14 @@
     S.account = null;
     S.easyRows = null;
     if (!S.key) { renderAccount(); return; }
-    status('Lade Account-Fortschritt…');
+    status('Loading account progress…');
     try {
       const [acc, prog] = await Promise.all([GW2.account(S.key), GW2.accountAchievements(S.key)]);
       S.account = acc;
       S.progress = new Map(prog.map((p) => [p.id, p]));
       S.progressTs = new Date();
     } catch (e) {
-      toast(`API-Key-Fehler: ${e.message}`);
+      toast(`API key error: ${e.message}`);
     }
     status(null);
     renderAccount();
@@ -90,7 +91,7 @@
   function renderAccount() {
     const el = $('#account');
     if (!S.account) {
-      el.innerHTML = S.key ? '<span class="muted">Account nicht geladen</span>' : '<a href="#/settings">API-Key eintragen</a>';
+      el.innerHTML = S.key ? '<span class="muted">Account not loaded</span>' : '<a href="#/settings">Add API key</a>';
       return;
     }
     let ap = 0, doneCount = 0;
@@ -102,9 +103,9 @@
     }
     const total = ap + (S.account.daily_ap || 0) + (S.account.monthly_ap || 0);
     el.innerHTML = `<strong>${esc(S.account.name)}</strong>
-      <span class="pill" title="Erfolgs-AP ${ap} + Tages-AP ${S.account.daily_ap || 0} + Monats-AP ${S.account.monthly_ap || 0}">≈ ${total.toLocaleString('de-DE')} AP</span>
-      <span class="pill">${doneCount} abgeschlossen</span>
-      <button class="link" id="reload-progress" title="Fortschritt neu von der API holen">↻</button>`;
+      <span class="pill" title="Achievement AP ${ap} + daily AP ${S.account.daily_ap || 0} + monthly AP ${S.account.monthly_ap || 0}">≈ ${total.toLocaleString('en-US')} AP</span>
+      <span class="pill">${doneCount} completed</span>
+      <button class="link" id="reload-progress" title="Reload progress from the API">↻</button>`;
     $('#reload-progress').onclick = async () => { await loadProgress(); route(); };
   }
 
@@ -128,8 +129,8 @@
     const p = S.progress.get(a.id);
     const inf = Progress.info(a, p);
     if (!S.account) return `<span class="pill">${inf.perCycle} AP</span>`;
-    if (inf.finished) return '<span class="pill ok">✔ fertig</span>';
-    if (inf.remainingAP === 0 && inf.repeatable) return '<span class="pill ok">✔ AP-Cap</span>';
+    if (inf.finished) return '<span class="pill ok">✔ done</span>';
+    if (inf.remainingAP === 0 && inf.repeatable) return '<span class="pill ok">✔ AP cap</span>';
     const prog = inf.maxCount ? ` · ${inf.current}/${inf.maxCount}` : '';
     return `<span class="pill ${inf.current ? 'warn' : ''}">${inf.earned}/${isFinite(inf.possible) ? inf.possible : '∞'} AP${prog}</span>`;
   }
@@ -137,7 +138,7 @@
   function catPath(a) {
     const cat = S.catOf.get(a.id);
     const grp = cat && S.groupOf.get(cat.id);
-    return [grp?.name, cat?.name].filter(Boolean).map(esc).join(' › ') || '<span class="muted">nicht kategorisiert</span>';
+    return [grp?.name, cat?.name].filter(Boolean).map(esc).join(' › ') || '<span class="muted">uncategorized</span>';
   }
 
   function bar(frac) {
@@ -150,7 +151,7 @@
     view.innerHTML = `
       <div class="searchbox">
         ${S.key ? '' : keyCardHtml()}
-        <input id="q" type="search" placeholder="Erfolg suchen… (Name oder Beschreibung, z. B. „Sprung ins Ungewisse“)" autocomplete="off" value="${esc(S.query)}">
+        <input id="q" type="search" placeholder="Search achievements… (name, description or ID, e.g. “Leap of Faith”)" autocomplete="off" value="${esc(S.query)}">
       </div>
       <div id="results"></div>`;
     const q = $('#q');
@@ -172,8 +173,8 @@
     const el = $('#results');
     const q = norm(S.query);
     if (q.length < 2) {
-      el.innerHTML = `<p class="muted">${S.ach.size.toLocaleString('de-DE')} Erfolge geladen. Tippe mindestens 2 Zeichen.
-        ${S.account ? '' : '<br>Tipp: Mit API-Key siehst du deinen Fortschritt und den <a href="#/easy">Leichte-AP-Finder</a>.'}</p>`;
+      el.innerHTML = `<p class="muted">${S.ach.size.toLocaleString('en-US')} achievements loaded. Type at least 2 characters.
+        ${S.account ? '' : '<br>Tip: with an API key you see your progress and the <a href="#/easy">Easy AP finder</a>.'}</p>`;
       return;
     }
     const idQuery = /^\d+$/.test(q) ? +q : null;
@@ -198,8 +199,8 @@
         <div class="grow"><div class="title">${esc(a.name)}</div><div class="sub">${catPath(a)}</div></div>
         ${stateBadge(a)}
       </a></li>`).join('')}</ul>
-      ${scored.length > top.length ? `<p class="muted">… und ${scored.length - top.length} weitere. Suche genauer.</p>` : ''}`
-      : '<p class="muted">Keine Treffer.</p>';
+      ${scored.length > top.length ? `<p class="muted">… and ${scored.length - top.length} more. Refine your search.</p>` : ''}`
+      : '<p class="muted">No results.</p>';
   }
 
   // ---------- Erfolg / Run-Through ----------
@@ -224,7 +225,7 @@
       resolved[type] = await GW2.resolve(type, ids, lang).catch(() => ({}));
     }));
     return bits.map((b, i) => {
-      if (b.type === 'Text') return { type: 'Text', label: b.text || `Schritt ${i + 1}` };
+      if (b.type === 'Text') return { type: 'Text', label: b.text || `Step ${i + 1}` };
       const r = resolved[b.type]?.[b.id];
       return { type: b.type, id: b.id, label: r?.name || `${b.type} #${b.id}`, icon: r?.icon, rarity: r?.rarity };
     });
@@ -241,18 +242,18 @@
         const it = items[r.id];
         return `${it?.icon ? `<img class="mini" src="${esc(it.icon)}" alt="">` : '🎁'} ${r.count > 1 ? `${r.count}× ` : ''}${esc(it?.name || `Item #${r.id}`)}`;
       }
-      if (r.type === 'Mastery') return `⭐ Meisterschaftspunkt (${esc(r.region)})`;
-      if (r.type === 'Title') return `🏷️ Titel „${esc(titles[r.id]?.name || r.id)}“`;
+      if (r.type === 'Mastery') return `⭐ Mastery point (${esc(r.region)})`;
+      if (r.type === 'Title') return `🏷️ Title “${esc(titles[r.id]?.name || r.id)}”`;
       return esc(r.type);
     });
-    return `<div class="rewards"><strong>Belohnungen:</strong> ${parts.map((p) => `<span class="pill">${p}</span>`).join(' ')}</div>`;
+    return `<div class="rewards"><strong>Rewards:</strong> ${parts.map((p) => `<span class="pill">${p}</span>`).join(' ')}</div>`;
   }
 
   async function showAchievement(id) {
     setNav(null);
     const token = ++S.viewToken;
     const a = S.ach.get(id);
-    if (!a) { view.innerHTML = `<p class="muted">Erfolg ${id} nicht gefunden.</p>`; return; }
+    if (!a) { view.innerHTML = `<p class="muted">Achievement ${id} not found.</p>`; return; }
     const p = S.progress.get(id);
     const inf = Progress.info(a, p);
     const flags = (a.flags || []).filter((f) => !['CategoryDisplay', 'MoveToTop', 'IgnoreNearlyComplete', 'RepairOnLogin'].includes(f));
@@ -261,17 +262,17 @@
 
     let status = '';
     if (S.account) {
-      const count = inf.finished ? '✔ Abgeschlossen' : inf.maxCount > 1 ? `${inf.current} / ${inf.maxCount}` : 'Offen';
+      const count = inf.finished ? '✔ Completed' : inf.maxCount > 1 ? `${inf.current} / ${inf.maxCount}` : 'Not done';
       status = `<div class="focus-status">${bar(inf.frac)}
         <span>${count}</span>
         <span class="pill">${inf.earned}/${isFinite(inf.possible) ? inf.possible : '∞'} AP</span>
-        ${inf.next ? `<span class="pill warn">+${inf.next.points} AP bei ${inf.next.count}</span>` : ''}</div>`;
+        ${inf.next ? `<span class="pill warn">+${inf.next.points} AP at ${inf.next.count}</span>` : ''}</div>`;
     } else {
-      status = `<div class="focus-status"><span class="pill">${inf.perCycle} AP</span> <span class="muted">Kein API-Key – Fortschritt unbekannt</span></div>`;
+      status = `<div class="focus-status"><span class="pill">${inf.perCycle} AP</span> <span class="muted">No API key – progress unknown</span></div>`;
     }
 
     view.innerHTML = `
-      <p><a href="javascript:history.back()" class="link">← Zurück</a></p>
+      <p><a href="javascript:history.back()" class="link">← Back</a></p>
       <header class="focus-head">
         ${achIcon(a).replace('class="icon"', 'class="icon big"')}
         <div class="grow">
@@ -281,17 +282,17 @@
           ${status}
         </div>
       </header>
-      <section id="todo" class="todo"><h2>Was du noch tun musst</h2><p class="muted">Lade…</p></section>
+      <section id="todo" class="todo"><h2>What you still need to do</h2><p class="muted">Loading…</p></section>
       <details id="done-box" class="box" hidden><summary></summary><div id="done-body"></div></details>
-      <details id="guide-box" class="box"><summary>📖 Kompletter Wiki-Guide</summary><div id="guide"><p class="muted">Lade Wiki-Seite…</p></div></details>
-      <details id="more-box" class="box"><summary>ℹ️ Details: Beschreibung, Belohnungen, Stufen, Kategorie</summary>
+      <details id="guide-box" class="box"><summary>📖 Full wiki guide</summary><div id="guide"><p class="muted">Loading wiki page…</p></div></details>
+      <details id="more-box" class="box"><summary>ℹ️ Details: description, rewards, tiers, category</summary>
         ${a.description ? `<p class="desc">${esc(stripTags(a.description))}</p>` : ''}
-        ${a.locked_text ? `<p class="muted"><strong>Freischaltung:</strong> ${esc(stripTags(a.locked_text))}</p>` : ''}
-        <p class="muted">Stufen: ${tierText || '—'} · ID ${a.id}</p>
+        ${a.locked_text ? `<p class="muted"><strong>Unlock:</strong> ${esc(stripTags(a.locked_text))}</p>` : ''}
+        <p class="muted">Tiers: ${tierText || '—'} · ID ${a.id}</p>
         <div class="flags">${flags.map((f) => `<span class="pill">${esc(f)}</span>`).join(' ')}</div>
         <div id="rewards"></div>
         <div id="category"></div>
-        <p><a class="btn" id="wiki-link" target="_blank" rel="noopener" href="${Wiki.searchUrl(S.wikiLang, a.name)}">Im Wiki öffnen ↗</a></p>
+        <p><a class="btn" id="wiki-link" target="_blank" rel="noopener" href="${Wiki.searchUrl(S.wikiLang, a.name)}">Open in wiki ↗</a></p>
       </details>`;
 
     rewardsHtml(a).then((h) => { if (token === S.viewToken) $('#rewards').innerHTML = h; });
@@ -306,14 +307,21 @@
       if (token !== S.viewToken) return;
       $('#wiki-link').href = Wiki.pageUrl(S.wikiLang, wiki.title);
       const content = Wiki.sanitize(S.wikiLang, wiki.html);
+      if (!requirement) {
+        const wr = wikiRequirement(content);
+        if (wr) {
+          S.wikiReq.set(a.id, wr);
+          $('.focus-head h1').insertAdjacentHTML('afterend', `<p class="req">${esc(wr)} <span class="sub">(from the wiki)</span></p>`);
+        }
+      }
       const wikiNames = S.wikiLang === S.lang ? names : await bitNames(wiki.ach, S.wikiLang);
       if (token !== S.viewToken) return;
       renderTodo(a, inf, names, content, wikiNames);
       renderGuide(content, wiki.title);
     } catch (e) {
       if (token !== S.viewToken) return;
-      $('#guide').innerHTML = `<p class="muted">Keine passende Wiki-Seite gefunden (${esc(e.message)}).
-        <a target="_blank" rel="noopener" href="${Wiki.searchUrl(S.wikiLang, a.name)}">Im Wiki suchen ↗</a></p>`;
+      $('#guide').innerHTML = `<p class="muted">No matching wiki page found (${esc(e.message)}).
+        <a target="_blank" rel="noopener" href="${Wiki.searchUrl(S.wikiLang, a.name)}">Search the wiki ↗</a></p>`;
     }
   }
 
@@ -323,7 +331,7 @@
     const promise = (async () => {
       const ach = S.wikiLang === S.lang ? a : await GW2.achievementInLang(a.id, S.wikiLang);
       const title = await Wiki.findPage(S.wikiLang, { id: a.id, name: ach?.name || a.name, context: 'Achievement' });
-      if (!title) throw new Error('nicht gefunden');
+      if (!title) throw new Error('not found');
       const parsed = await Wiki.parse(S.wikiLang, title);
       return { ...parsed, ach: ach || a };
     })();
@@ -349,7 +357,7 @@
     const others = categoryIds(cat).filter((id) => id !== a.id).map((id) => S.ach.get(id)).filter(Boolean);
     if (!others.length || isMeta(a)) { el.innerHTML = ''; return; }
     const open = others.filter((oa) => !Progress.info(oa, S.progress.get(oa.id)).finished).length;
-    el.innerHTML = `<h3>Weitere Erfolge in „${esc(cat.name)}“ ${S.account ? `<span class="sub">✔ ${others.length - open} · ○ ${open}</span>` : ''}</h3>
+    el.innerHTML = `<h3>Other achievements in “${esc(cat.name)}” ${S.account ? `<span class="sub">✔ ${others.length - open} · ○ ${open}</span>` : ''}</h3>
       <ol class="steps compact">${others.map((oa) => `<li class="${Progress.info(oa, S.progress.get(oa.id)).finished ? 'done' : ''}">
         <a href="#/a/${oa.id}" class="grow">${esc(oa.name)}</a> ${stateBadge(oa)}</li>`).join('')}</ol>`;
   }
@@ -381,6 +389,33 @@
 
   function manualKey(id) { return `manual-${id}`; }
 
+  // Anforderung: API-Text, sonst aus dem Wiki (manche Erfolge haben in der API kein Anforderungsfeld).
+  function requirementOf(a) {
+    return stripTags(a.requirement).replace(/\s+/g, ' ').trim() || S.wikiReq.get(a.id) || '';
+  }
+
+  // Sucht im Wiki-Text die Anforderung: erst ein „Requirement“-Feld, sonst die ersten Absätze der Einleitung.
+  function wikiRequirement(content) {
+    for (const el of content.querySelectorAll('th, dt, b, strong')) {
+      if (!/^(requirements?|objectives?|anforderung(en)?|ziel)\s*:?$/i.test(el.textContent.trim())) continue;
+      const val = el.tagName === 'TH' ? el.nextElementSibling
+        : el.tagName === 'DT' ? el.nextElementSibling
+          : el.parentElement;
+      const text = (val?.textContent || '').replace(el.textContent, '').replace(/\s+/g, ' ').trim().replace(/^:\s*/, '');
+      if (text.length > 3) return text;
+    }
+    const intro = [];
+    for (const node of content.children) {
+      if (/^H[1-6]$/.test(node.tagName)) break;
+      if (node.tagName === 'P' && !node.closest('table')) {
+        const t = node.textContent.replace(/\s+/g, ' ').trim();
+        if (t.length > 20) intro.push(t);
+      }
+      if (intro.length >= 2) break;
+    }
+    return intro.join(' ');
+  }
+
   // Ein Text-Schritt, der genau wie ein anderer Erfolg heißt (z. B. bei Story-Metas).
   function linkedAch(n) {
     return n.type === 'Text' ? S.byName?.get(norm(n.label).replace(/[.!]+$/, '')) : null;
@@ -401,24 +436,24 @@
     // 1. Offene Voraussetzungen zuerst
     for (const pa of prereqChain(a)) {
       if (Progress.info(pa, S.progress.get(pa.id)).finished) continue;
-      todo.push(item(`<span class="check">🔒</span><div class="grow"><strong>Zuerst abschließen:</strong>
+      todo.push(item(`<span class="check">🔒</span><div class="grow"><strong>Complete first:</strong>
         <a href="#/a/${pa.id}">${esc(pa.name)}</a>
         <div class="sub" style="margin-left:0">${esc(stripTags(pa.requirement).replace(/\s+/g, ' '))}</div></div>`));
     }
-    if (inf.needsUnlock) todo.push(item(`<span class="check">🔒</span><div class="grow"><strong>Erst freischalten:</strong> ${esc(stripTags(a.locked_text) || 'siehe Wiki-Guide')}</div>`));
+    if (inf.needsUnlock) todo.push(item(`<span class="check">🔒</span><div class="grow"><strong>Unlock first:</strong> ${esc(stripTags(a.locked_text) || 'see wiki guide')}</div>`));
 
     const bits = a.bits || [];
     const manual = new Set(Store.get(manualKey(a.id), []));
     if (inf.finished) {
-      lead = '<p class="ok-text">✔ Abgeschlossen – hier gibt es nichts mehr zu tun.</p>';
+      lead = '<p class="ok-text">✔ Completed – nothing left to do here.</p>';
     } else if (bits.length) {
       // 2a. Einzelschritte (Sammlungen, Orte, Story-Kapitel …)
       const doneCount = bits.filter((_, i) => inf.bitsDone.has(i)).length;
       const needed = inf.maxCount && inf.maxCount < bits.length ? inf.maxCount : bits.length;
       if (S.account) {
-        lead = `<p class="summary"><span class="pill warn">Noch ${Math.max(0, needed - doneCount)}</span>
-          <span class="pill">${doneCount} / ${needed} geschafft</span>
-          ${needed < bits.length ? `<span class="muted">– ${needed} von ${bits.length} reichen, such dir die leichtesten aus.</span>` : ''}</p>`;
+        lead = `<p class="summary"><span class="pill warn">${Math.max(0, needed - doneCount)} left</span>
+          <span class="pill">${doneCount} / ${needed} done</span>
+          ${needed < bits.length ? `<span class="muted">– you only need ${needed} of ${bits.length}, pick the easiest.</span>` : ''}</p>`;
       }
       bits.forEach((_, i) => {
         const n = names[i];
@@ -428,17 +463,17 @@
         const label = linked
           ? `<a href="#/a/${linked.id}">${esc(n.label)}</a> ${stateBadge(linked)}`
           : `<span class="${n.rarity ? `r-${esc(n.rarity)}` : ''}">${esc(n.label)}</span>`;
-        const typeName = { Item: 'Gegenstand', Skin: 'Skin', Minipet: 'Miniatur' }[n.type] || '';
+        const typeName = { Item: 'Item', Skin: 'Skin', Minipet: 'Miniature' }[n.type] || '';
         const head = `<div>${n.icon ? `<img class="mini" src="${esc(n.icon)}" alt="">` : ''}${label}
           ${typeName ? `<span class="sub">${typeName}</span>` : ''}
-          ${n.type !== 'Text' ? `<a class="sub" href="${wikiRoute(S.wikiLang, wikiLabel)}">Wiki-Seite</a>` : ''}</div>`;
+          ${n.type !== 'Text' ? `<a class="sub" href="${wikiRoute(S.wikiLang, wikiLabel)}">Wiki page</a>` : ''}</div>`;
         if (apiDone) { done.push(item(`<span class="check">✔</span><div class="grow">${head}</div>`, 'done')); return; }
         const hint = content ? findWikiHint(content, wikiLabel) : null;
-        const mark = S.account ? '○' : `<input type="checkbox" class="manual" data-bit="${i}" ${manual.has(i) ? 'checked' : ''} title="Manuell abhaken (ohne API-Key)">`;
+        const mark = S.account ? '○' : `<input type="checkbox" class="manual" data-bit="${i}" ${manual.has(i) ? 'checked' : ''} title="Tick off manually (no API key)">`;
         todo.push(item(`<span class="check">${mark}</span><div class="grow">${head}
           ${hint ? `<div class="hint wiki">${hint}</div>` : ''}
-          ${!hint && n.type !== 'Text' ? `<button class="small acq" data-bit="${i}">Wie bekomme ich das? (Wiki)</button><div class="acq-out wiki"></div>` : ''}
-          ${!hint && n.type === 'Text' && !linked && content ? '<div class="sub" style="margin-left:0">Kein eigener Hinweis gefunden – siehe Wiki-Guide unten.</div>' : ''}
+          ${!hint && n.type !== 'Text' ? `<button class="small acq" data-bit="${i}">How do I get this? (wiki)</button><div class="acq-out wiki"></div>` : ''}
+          ${!hint && n.type === 'Text' && !linked && content ? '<div class="sub" style="margin-left:0">No specific hint found – see the wiki guide below.</div>' : ''}
         </div>`, !S.account && manual.has(i) ? 'done' : ''));
       });
     } else if (isMeta(a)) {
@@ -450,26 +485,26 @@
         (f ? done : todo).push(achItem(oa, f ? '✔' : '○'));
       }
       if (S.account) {
-        lead = `<p class="summary"><span class="pill warn">Noch ${Math.max(0, inf.maxCount - inf.current)} Erfolge</span>
-          <span class="pill">${inf.current} / ${inf.maxCount} geschafft</span>
-          <span class="muted">– aus diesen offenen Erfolgen der Kategorie „${esc(cat.name)}“:</span></p>`;
+        lead = `<p class="summary"><span class="pill warn">${Math.max(0, inf.maxCount - inf.current)} achievements left</span>
+          <span class="pill">${inf.current} / ${inf.maxCount} done</span>
+          <span class="muted">– from these open achievements in “${esc(cat.name)}”:</span></p>`;
       }
     } else {
       // 2c. Zähl- oder Einzel-Erfolg: die Anforderung ist die Aufgabe, Anleitung aus dem Wiki
       needsGuide = true;
       const rest = inf.maxCount - inf.current;
       todo.push(item(`<span class="check">○</span><div class="grow">
-        ${S.account && inf.maxCount > 1 ? `<strong>Noch ${rest.toLocaleString('de-DE')}×</strong> – ` : ''}${esc(stripTags(a.requirement).replace(/\s+/g, ' ')) || 'Siehe Wiki-Guide'}
-        ${inf.tiers.length > 1 && inf.next ? `<div class="sub" style="margin-left:0">Nächste Stufe bei ${inf.next.count} (+${inf.next.points} AP)</div>` : ''}</div>`));
+        ${S.account && inf.maxCount > 1 ? `<strong>${rest.toLocaleString('en-US')}× left</strong> – ` : ''}${esc(requirementOf(a)) || 'See the wiki guide'}
+        ${inf.tiers.length > 1 && inf.next ? `<div class="sub" style="margin-left:0">Next tier at ${inf.next.count} (+${inf.next.points} AP)</div>` : ''}</div>`));
     }
 
-    el.innerHTML = `<h2>Was du noch tun musst</h2>${lead}
+    el.innerHTML = `<h2>What you still need to do</h2>${lead}
       ${todo.length ? `<ol class="steps">${todo.join('')}</ol>` : ''}
-      ${needsGuide ? '<p class="muted">So geht’s: siehe Wiki-Guide direkt darunter.</p>' : ''}`;
+      ${needsGuide ? '<p class="muted">How to do it: see the wiki guide right below.</p>' : ''}`;
 
     const doneBox = $('#done-box');
     doneBox.hidden = !done.length;
-    doneBox.querySelector('summary').textContent = `✔ Bereits erledigt (${done.length})`;
+    doneBox.querySelector('summary').textContent = `✔ Already done (${done.length})`;
     $('#done-body').innerHTML = `<ol class="steps">${done.join('')}</ol>`;
     // Ohne konkrete Schritte ist der Wiki-Guide die Anleitung -> aufklappen
     $('#guide-box').open = needsGuide && !inf.finished;
@@ -485,17 +520,17 @@
       const out = btn.nextElementSibling;
       const n = wikiNames?.[i] || names[i];
       btn.disabled = true;
-      btn.textContent = 'Lade…';
+      btn.textContent = 'Loading…';
       try {
         const res = await Wiki.acquisition(S.wikiLang, { type: n.type, id: n.id, name: n.label });
-        if (!res) throw new Error('Keine Wiki-Seite gefunden');
+        if (!res) throw new Error('No wiki page found');
         const node = Wiki.sanitize(S.wikiLang, res.html);
-        out.innerHTML = `<div class="sub">Aus <a href="${wikiRoute(S.wikiLang, res.title)}">${esc(res.title)}</a>${res.sectionName ? ` › ${esc(res.sectionName)}` : ''}</div>`;
+        out.innerHTML = `<div class="sub">From <a href="${wikiRoute(S.wikiLang, res.title)}">${esc(res.title)}</a>${res.sectionName ? ` › ${esc(res.sectionName)}` : ''}</div>`;
         out.appendChild(node);
         btn.remove();
       } catch (e) {
         btn.disabled = false;
-        btn.textContent = 'Wie bekomme ich das? (Wiki)';
+        btn.textContent = 'How do I get this? (wiki)';
         out.innerHTML = `<span class="muted">${esc(e.message)}</span>`;
       }
     }));
@@ -506,8 +541,8 @@
 
   function renderGuide(content, title) {
     const el = $('#guide');
-    el.innerHTML = `<p class="muted">Aus dem Guild Wars 2 Wiki: <a href="${wikiRoute(S.wikiLang, title)}">${esc(title)}</a> (CC BY-NC-SA).
-      Bilder antippen zum Vergrößern, Chat-Codes antippen zum Kopieren.</p>`;
+    el.innerHTML = `<p class="muted">From the Guild Wars 2 Wiki: <a href="${wikiRoute(S.wikiLang, title)}">${esc(title)}</a> (CC BY-NC-SA).
+      Tap images to enlarge, tap chat codes to copy.</p>`;
     renderSections(el, content);
   }
 
@@ -543,23 +578,23 @@
     const token = ++S.viewToken;
     const [pageTitle, anchor] = title.split('#');
     view.innerHTML = `
-      <p><a href="javascript:history.back()" class="link">← Zurück</a></p>
+      <p><a href="javascript:history.back()" class="link">← Back</a></p>
       <h1>${esc(pageTitle)}</h1>
-      <div id="wiki-page"><p class="muted">Lade Wiki-Seite…</p></div>`;
+      <div id="wiki-page"><p class="muted">Loading wiki page…</p></div>`;
     try {
       const res = await Wiki.page(lang, pageTitle);
       if (token !== S.viewToken) return;
       const content = Wiki.sanitize(lang, res.html);
       view.querySelector('h1').innerHTML = `${esc(res.title)}
-        <a class="sub" target="_blank" rel="noopener" href="${Wiki.pageUrl(lang, res.title)}">im Browser ↗</a>`;
+        <a class="sub" target="_blank" rel="noopener" href="${Wiki.pageUrl(lang, res.title)}">in browser ↗</a>`;
       const el = $('#wiki-page');
       el.innerHTML = '';
       renderSections(el, content, true);
       if (anchor) document.getElementById(anchor)?.scrollIntoView();
     } catch (e) {
       if (token !== S.viewToken) return;
-      $('#wiki-page').innerHTML = `<p class="err">Seite konnte nicht geladen werden: ${esc(e.message)}</p>
-        <a target="_blank" rel="noopener" href="${Wiki.searchUrl(lang, pageTitle)}">Im Wiki suchen ↗</a>`;
+      $('#wiki-page').innerHTML = `<p class="err">Could not load page: ${esc(e.message)}</p>
+        <a target="_blank" rel="noopener" href="${Wiki.searchUrl(lang, pageTitle)}">Search the wiki ↗</a>`;
     }
   }
 
@@ -569,8 +604,8 @@
     box.innerHTML = `<figure>
       <img src="${esc(src)}" alt="">
       <figcaption>${esc(caption || '')}
-        ${fileTitle ? `<a target="_blank" rel="noopener" href="${Wiki.pageUrl(lang, fileTitle)}">Bildseite ↗</a>` : ''}
-        <span class="muted">· Klick oder Esc zum Schließen</span></figcaption></figure>`;
+        ${fileTitle ? `<a target="_blank" rel="noopener" href="${Wiki.pageUrl(lang, fileTitle)}">File page ↗</a>` : ''}
+        <span class="muted">· Click or Esc to close</span></figcaption></figure>`;
     box.hidden = false;
   }
 
@@ -591,7 +626,7 @@
     const chat = e.target.closest('button.chatlink');
     if (chat) {
       e.preventDefault();
-      copyText(chat.dataset.code).then(() => toast(`${chat.dataset.code} kopiert – im Spiel mit Strg+V in den Chat einfügen.`));
+      copyText(chat.dataset.code).then(() => toast(`${chat.dataset.code} copied – paste it into the in-game chat with Ctrl+V.`));
       chat.classList.add('copied');
       setTimeout(() => chat.classList.remove('copied'), 1200);
       return;
@@ -652,35 +687,35 @@
   function showEasy() {
     setNav('easy');
     if (!S.account) {
-      view.innerHTML = `<h1>Leichte AP</h1><p>Für den Leichte-AP-Finder brauche ich deinen Fortschritt.
-        <a href="#/settings">Trag zuerst einen API-Key ein</a> (Rechte: <code>account</code> + <code>progression</code>).</p>`;
+      view.innerHTML = `<h1>Easy AP</h1><p>The Easy AP finder needs your progress.
+        <a href="#/settings">Add an API key first</a> (permissions: <code>account</code> + <code>progression</code>).</p>`;
       return;
     }
     if (!S.easyRows) S.easyRows = computeEasyRows();
     const f = S.easy;
     view.innerHTML = `
-      <h1>Leichte AP</h1>
-      <p class="muted">Offene Erfolge, sortiert nach geschätzter Leichtigkeit: AP der nächsten Stufe, wie viele Schritte noch fehlen und wie weit du schon bist.
-        Tägliche/wöchentliche Erfolge und nicht mehr kategorisierte (meist unerreichbare) Erfolge sind ausgeblendet.</p>
+      <h1>Easy AP</h1>
+      <p class="muted">Open achievements, sorted by estimated ease: AP of the next tier, how many steps are left and how far along you are.
+        Daily/weekly achievements and uncategorized (usually unobtainable) achievements are hidden.</p>
       <div class="filters">
-        <label>Sortierung
+        <label>Sort by
           <select id="f-sort">
-            <option value="ease">Leichtigkeit (Empfehlung)</option>
-            <option value="progress">Fast fertig</option>
-            <option value="steps">Wenigste Schritte bis zur nächsten Stufe</option>
-            <option value="next">Meiste AP nächste Stufe</option>
-            <option value="remaining">Meiste offene AP gesamt</option>
+            <option value="ease">Easiest (recommended)</option>
+            <option value="progress">Almost done</option>
+            <option value="steps">Fewest steps to next tier</option>
+            <option value="next">Most AP in next tier</option>
+            <option value="remaining">Most remaining AP</option>
           </select></label>
-        <label>Min. Fortschritt <input id="f-min" type="range" min="0" max="95" step="5" value="${f.minProgress}"> <span id="f-min-v">${f.minProgress}%</span></label>
-        <label><input type="checkbox" id="f-started" ${f.onlyStarted ? 'checked' : ''}> Nur begonnene</label>
-        <label><input type="checkbox" id="f-locked" ${f.hideLocked ? 'checked' : ''}> Gesperrte ausblenden</label>
-        <label><input type="checkbox" id="f-pvp" ${f.hidePvp ? 'checked' : ''}> PvP ausblenden</label>
-        <label><input type="checkbox" id="f-rep" ${f.hideRepeatable ? 'checked' : ''}> Wiederholbare ausblenden</label>
-        <label title="Erfolge vergangener/saisonaler Events – nur während des jeweiligen Festivals machbar"><input type="checkbox" id="f-hist" ${f.hideHistoric !== false ? 'checked' : ''}> Historische ausblenden</label>
-        <label title="Halle der Monumente – nur mit Guild-Wars-1-Account machbar"><input type="checkbox" id="f-gw1" ${f.hideGw1 !== false ? 'checked' : ''}> GW1-Erfolge ausblenden</label>
-        <label title="Meta-Erfolge brauchen mehrere andere Erfolge"><input type="checkbox" id="f-meta" ${f.hideMeta ? 'checked' : ''}> Meta-Erfolge ausblenden</label>
+        <label>Min. progress <input id="f-min" type="range" min="0" max="95" step="5" value="${f.minProgress}"> <span id="f-min-v">${f.minProgress}%</span></label>
+        <label><input type="checkbox" id="f-started" ${f.onlyStarted ? 'checked' : ''}> Started only</label>
+        <label><input type="checkbox" id="f-locked" ${f.hideLocked ? 'checked' : ''}> Hide locked</label>
+        <label><input type="checkbox" id="f-pvp" ${f.hidePvp ? 'checked' : ''}> Hide PvP</label>
+        <label><input type="checkbox" id="f-rep" ${f.hideRepeatable ? 'checked' : ''}> Hide repeatable</label>
+        <label title="Past/seasonal events – only doable while the festival is running"><input type="checkbox" id="f-hist" ${f.hideHistoric !== false ? 'checked' : ''}> Hide historic</label>
+        <label title="Hall of Monuments – requires a Guild Wars 1 account"><input type="checkbox" id="f-gw1" ${f.hideGw1 !== false ? 'checked' : ''}> Hide GW1 achievements</label>
+        <label title="Meta achievements require several other achievements"><input type="checkbox" id="f-meta" ${f.hideMeta ? 'checked' : ''}> Hide meta achievements</label>
       </div>
-      <details class="groups"><summary>Gruppen filtern (${S.groups.length - f.excludedGroups.length}/${S.groups.length} aktiv)</summary>
+      <details class="groups"><summary>Filter groups (${S.groups.length - f.excludedGroups.length}/${S.groups.length} active)</summary>
         <div class="group-list">${S.groups.map((g) => `<label><input type="checkbox" class="f-group" value="${esc(g.id)}" ${f.excludedGroups.includes(g.id) ? '' : 'checked'}> ${esc(g.name)}</label>`).join('')}</div>
       </details>
       <div id="easy-summary" class="muted"></div>
@@ -698,7 +733,7 @@
     $('#f-gw1').onchange = (e) => { f.hideGw1 = e.target.checked; update(); };
     view.querySelectorAll('.f-group').forEach((cb) => cb.onchange = () => {
       f.excludedGroups = [...view.querySelectorAll('.f-group')].filter((c) => !c.checked).map((c) => c.value);
-      $('.groups summary').textContent = `Gruppen filtern (${S.groups.length - f.excludedGroups.length}/${S.groups.length} aktiv)`;
+      $('.groups summary').textContent = `Filter groups (${S.groups.length - f.excludedGroups.length}/${S.groups.length} active)`;
       update();
     });
     renderEasyTable();
@@ -727,51 +762,51 @@
     rows.sort(sorters[f.sort] || sorters.ease);
     const sumNext = rows.reduce((s, r) => s + r.inf.next.points, 0);
     const sumAll = rows.reduce((s, r) => s + (isFinite(r.inf.remainingAP) ? r.inf.remainingAP : 0), 0);
-    $('#easy-summary').textContent = `${rows.length} Erfolge · ${sumNext.toLocaleString('de-DE')} AP in der jeweils nächsten Stufe · ${sumAll.toLocaleString('de-DE')} AP offen gesamt`;
+    $('#easy-summary').textContent = `${rows.length} achievements · ${sumNext.toLocaleString('en-US')} AP in their next tier · ${sumAll.toLocaleString('en-US')} AP remaining in total`;
     const top = rows.slice(0, 200);
     $('#easy-table').innerHTML = `<table class="easy">
-      <thead><tr><th></th><th>Erfolg</th><th>Fortschritt</th><th title="Schritte bis zur nächsten Stufe">Nächste Stufe</th><th>Offen</th></tr></thead>
+      <thead><tr><th></th><th>Achievement</th><th>Progress</th><th title="Steps to the next tier">Next tier</th><th>Left</th></tr></thead>
       <tbody>${top.map((r) => `<tr onclick="location.hash='#/a/${r.a.id}'">
         <td>${achIcon(r.a)}</td>
-        <td><a href="#/a/${r.a.id}">${esc(r.a.name)}</a>${r.locked ? ' <span class="pill warn" title="Voraussetzung/Freischaltung fehlt">🔒</span>' : ''}${r.meta ? ' <span class="pill" title="Braucht mehrere andere Erfolge dieser Kategorie">Meta</span>' : ''}
+        <td><a href="#/a/${r.a.id}">${esc(r.a.name)}</a>${r.locked ? ' <span class="pill warn" title="Prerequisite/unlock missing">🔒</span>' : ''}${r.meta ? ' <span class="pill" title="Requires several other achievements in this category">Meta</span>' : ''}
           <div class="sub">${catPath(r.a)}</div></td>
         <td class="prog">${bar(r.inf.frac)}<span class="sub">${r.inf.current}/${r.inf.maxCount}</span></td>
-        <td><strong>+${r.inf.next.points} AP</strong><div class="sub">noch ${r.inf.next.steps}</div></td>
+        <td><strong>+${r.inf.next.points} AP</strong><div class="sub">${r.inf.next.steps} to go</div></td>
         <td>${isFinite(r.inf.remainingAP) ? r.inf.remainingAP : '∞'} AP</td>
       </tr>`).join('')}</tbody></table>
-      ${rows.length > top.length ? `<p class="muted">Zeige die ersten 200 von ${rows.length}.</p>` : ''}`;
+      ${rows.length > top.length ? `<p class="muted">Showing the first 200 of ${rows.length}.</p>` : ''}`;
   }
 
   // ---------- API-Key ----------
   async function saveKey(raw, info) {
     const key = raw.trim();
-    if (!key) { info.innerHTML = '<span class="err">Bitte einen API-Key einfügen.</span>'; return false; }
-    info.textContent = 'Prüfe Key…';
+    if (!key) { info.innerHTML = '<span class="err">Please paste an API key.</span>'; return false; }
+    info.textContent = 'Checking key…';
     try {
       const t = await GW2.tokenInfo(key);
       const missing = ['account', 'progression'].filter((p) => !t.permissions.includes(p));
-      if (missing.length) { info.innerHTML = `<span class="err">Dem Key fehlen Rechte: ${missing.join(', ')}</span>`; return false; }
+      if (missing.length) { info.innerHTML = `<span class="err">The key is missing permissions: ${missing.join(', ')}</span>`; return false; }
       S.key = key;
       Store.set('apiKey', key);
       await loadProgress();
-      info.innerHTML = `<span class="ok-text">✔ Key „${esc(t.name)}“ gespeichert – ${S.progress.size} Erfolge mit Fortschritt geladen.</span>`;
+      info.innerHTML = `<span class="ok-text">✔ Key “${esc(t.name)}” saved – progress for ${S.progress.size} achievements loaded.</span>`;
       return true;
     } catch (e) {
-      info.innerHTML = `<span class="err">Ungültiger Key: ${esc(e.message)}</span>`;
+      info.innerHTML = `<span class="err">Invalid key: ${esc(e.message)}</span>`;
       return false;
     }
   }
 
   function keyCardHtml() {
     return `<div class="card key-card">
-      <h2>🔑 API-Key einfügen</h2>
-      <p class="muted">Damit das Tool weiß, was du schon hast: Erstelle auf
+      <h2>🔑 Add your API key</h2>
+      <p class="muted">So the tool knows what you already have: create a key on
         <a href="https://account.arena.net/applications" target="_blank" rel="noopener">account.arena.net/applications</a>
-        einen Key mit den Rechten <code>account</code> und <code>progression</code> und füge ihn hier ein.
-        Er wird nur lokal gespeichert und nur an die offizielle GW2-API gesendet.</p>
+        with the permissions <code>account</code> and <code>progression</code> and paste it here.
+        It is only stored locally and only sent to the official GW2 API.</p>
       <div class="key-row">
-        <input id="home-key" type="password" placeholder="API-Key hier einfügen (Strg+V)" autocomplete="off">
-        <button id="home-key-save">Speichern</button>
+        <input id="home-key" type="password" placeholder="Paste API key here (Ctrl+V)" autocomplete="off">
+        <button id="home-key-save">Save</button>
       </div>
       <div id="home-key-info" class="muted"></div>
     </div>`;
@@ -781,29 +816,29 @@
   function showSettings() {
     setNav('settings');
     view.innerHTML = `
-      <h1>Einstellungen</h1>
+      <h1>Settings</h1>
       <div class="card">
-        <h2>GW2 API-Key</h2>
-        <p class="muted">Erstelle einen Key auf <a href="https://account.arena.net/applications" target="_blank" rel="noopener">account.arena.net/applications</a>
-          mit den Rechten <code>account</code> und <code>progression</code>. Der Key wird nur lokal in deinem Browser gespeichert
-          und nur an api.guildwars2.com gesendet.</p>
+        <h2>GW2 API key</h2>
+        <p class="muted">Create a key on <a href="https://account.arena.net/applications" target="_blank" rel="noopener">account.arena.net/applications</a>
+          with the permissions <code>account</code> and <code>progression</code>. The key is only stored locally in your browser
+          and only sent to api.guildwars2.com.</p>
         <input id="s-key" type="password" placeholder="XXXXXXXX-XXXX-…" value="${esc(S.key)}" autocomplete="off">
-        <div class="row-btns"><button id="s-save">Speichern & prüfen</button><button id="s-clear" class="secondary">Key entfernen</button></div>
+        <div class="row-btns"><button id="s-save">Save & check</button><button id="s-clear" class="secondary">Remove key</button></div>
         <div id="s-key-info" class="muted"></div>
       </div>
       <div class="card">
-        <h2>Sprache</h2>
-        <label>Spieldaten <select id="s-lang">
-          <option value="de">Deutsch</option><option value="en">English</option><option value="fr">Français</option><option value="es">Español</option>
+        <h2>Language</h2>
+        <label>Game data <select id="s-lang">
+          <option value="en">English</option><option value="de">Deutsch</option><option value="fr">Français</option><option value="es">Español</option>
         </select></label>
         <label>Wiki <select id="s-wiki">
-          <option value="en">Englisch (vollständiger, empfohlen)</option><option value="de">Deutsch</option>
+          <option value="en">English (more complete, recommended)</option><option value="de">Deutsch</option>
         </select></label>
       </div>
       <div class="card">
-        <h2>Daten</h2>
-        <p class="muted">Erfolgsdaten werden eine Woche lokal zwischengespeichert.</p>
-        <button id="s-refresh" class="secondary">Erfolgsdaten jetzt neu laden</button>
+        <h2>Data</h2>
+        <p class="muted">Achievement data is cached locally for one week.</p>
+        <button id="s-refresh" class="secondary">Reload achievement data now</button>
       </div>`;
     $('#s-lang').value = S.lang;
     $('#s-wiki').value = S.wikiLang;
@@ -813,22 +848,22 @@
       Store.set('apiKey', '');
       $('#s-key').value = '';
       await loadProgress();
-      $('#s-key-info').textContent = 'Key entfernt.';
+      $('#s-key-info').textContent = 'Key removed.';
     };
     $('#s-lang').onchange = async (e) => {
       S.lang = e.target.value;
-      Store.set('lang', S.lang);
+      Store.set('gameLang', S.lang);
       await loadStatic();
       renderAccount();
     };
     $('#s-wiki').onchange = (e) => {
       S.wikiLang = e.target.value;
-      Store.set('wikiLang', S.wikiLang);
+      Store.set('wikiLang2', S.wikiLang);
     };
     $('#s-refresh').onclick = async () => {
       await loadStatic(true);
       renderAccount();
-      toast('Erfolgsdaten aktualisiert.');
+      toast('Achievement data updated.');
     };
   }
 
@@ -854,8 +889,8 @@
       await loadStatic();
     } catch (e) {
       status(null);
-      view.innerHTML = `<p class="err">Konnte die Erfolgsdaten nicht laden: ${esc(e.message)}</p>
-        <p class="muted">Ist api.guildwars2.com erreichbar? Seite neu laden zum erneuten Versuch.</p>`;
+      view.innerHTML = `<p class="err">Could not load achievement data: ${esc(e.message)}</p>
+        <p class="muted">Is api.guildwars2.com reachable? Reload the page to try again.</p>`;
       return;
     }
     await loadProgress();

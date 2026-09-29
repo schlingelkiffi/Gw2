@@ -1,25 +1,25 @@
 <!doctype html>
-<html lang="de">
+<html lang="en">
 <head>
   <meta charset="utf-8">
   <meta name="viewport" content="width=device-width, initial-scale=1">
-  <title>GW2 Erfolgs-Helfer</title>
-  <meta name="description" content="Guild Wars 2 Erfolge suchen, Run-Through aus dem Wiki erstellen und leichte AP finden.">
+  <title>GW2 Achievement Helper</title>
+  <meta name="description" content="Search Guild Wars 2 achievements, get a wiki-based run-through and find easy AP.">
   <meta name="theme-color" content="#0f1115">
   <link rel="manifest" href="manifest.webmanifest">
   <link rel="icon" href="icons/icon.svg" type="image/svg+xml">
   <link rel="apple-touch-icon" href="icons/icon-192.png">
   <meta name="apple-mobile-web-app-capable" content="yes">
-  <meta name="apple-mobile-web-app-title" content="GW2 Erfolge">
+  <meta name="apple-mobile-web-app-title" content="GW2 Achievements">
   <link rel="stylesheet" href="css/style.css">
 </head>
 <body>
   <header class="top">
-    <a class="brand" href="#/">⚜ GW2 Erfolgs-Helfer</a>
+    <a class="brand" href="#/">⚜ GW2 Achievement Helper</a>
     <nav>
-      <a href="#/" data-nav="search">Suche</a>
-      <a href="#/easy" data-nav="easy">Leichte AP</a>
-      <a href="#/settings" data-nav="settings">Einstellungen</a>
+      <a href="#/" data-nav="search">Search</a>
+      <a href="#/easy" data-nav="easy">Easy AP</a>
+      <a href="#/settings" data-nav="settings">Settings</a>
     </nav>
     <div id="account" class="account"></div>
   </header>
@@ -27,13 +27,13 @@
     <span id="status-text"></span>
     <div class="bar"><div id="status-bar"></div></div>
   </div>
-  <main id="view"><p class="muted">Lade…</p></main>
+  <main id="view"><p class="muted">Loading…</p></main>
   <div id="toast" class="toast" hidden></div>
   <div id="lightbox" class="lightbox" hidden onclick="this.hidden = true"></div>
   <footer>
-    Daten: <a href="https://wiki.guildwars2.com/wiki/API:Main" target="_blank" rel="noopener">GW2 API</a> ·
+    Data: <a href="https://wiki.guildwars2.com/wiki/API:Main" target="_blank" rel="noopener">GW2 API</a> ·
     Guides: <a href="https://wiki.guildwars2.com" target="_blank" rel="noopener">Guild Wars 2 Wiki</a> (CC BY-NC-SA 3.0).
-    Inoffizielles Fan-Tool – Guild Wars 2 © ArenaNet.
+    Unofficial fan tool – Guild Wars 2 © ArenaNet.
   </footer>
   <script src="js/db.js"></script>
   <script src="js/api.js"></script>

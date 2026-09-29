@@ -1,13 +1,13 @@
 {
-  "name": "GW2 Erfolgs-Helfer",
-  "short_name": "GW2 Erfolge",
-  "description": "Guild Wars 2 Erfolge suchen, Run-Through aus dem Wiki und leichte AP finden.",
+  "name": "GW2 Achievement Helper",
+  "short_name": "GW2 Achievements",
+  "description": "Search Guild Wars 2 achievements, wiki-based run-throughs and easy AP.",
   "start_url": "./",
   "scope": "./",
   "display": "standalone",
   "background_color": "#15171c",
   "theme_color": "#0f1115",
-  "lang": "de",
+  "lang": "en",
   "icons": [
     { "src": "icons/icon-192.png", "sizes": "192x192", "type": "image/png" },
     { "src": "icons/icon-512.png", "sizes": "512x512", "type": "image/png" },

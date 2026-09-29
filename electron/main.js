@@ -12,7 +12,7 @@ function createWindow() {
     minWidth: 800,
     minHeight: 600,
     backgroundColor: '#15171c',
-    title: 'GW2 Erfolgs-Helfer',
+    title: 'GW2 Achievement Helper',
     icon: path.join(ROOT, 'icons', 'icon-512.png'),
     autoHideMenuBar: true,
     webPreferences: {
@@ -40,18 +40,18 @@ function createWindow() {
 // Minimales Menü: Zurück/Vor, Neu laden, Zoom, Entwicklerwerkzeuge.
 Menu.setApplicationMenu(Menu.buildFromTemplate([
   {
-    label: 'Ansicht',
+    label: 'View',
     submenu: [
-      { label: 'Zurück', accelerator: 'Alt+Left', click: (_, w) => w?.webContents.navigationHistory.goBack() },
-      { label: 'Vor', accelerator: 'Alt+Right', click: (_, w) => w?.webContents.navigationHistory.goForward() },
+      { label: 'Back', accelerator: 'Alt+Left', click: (_, w) => w?.webContents.navigationHistory.goBack() },
+      { label: 'Forward', accelerator: 'Alt+Right', click: (_, w) => w?.webContents.navigationHistory.goForward() },
       { type: 'separator' },
-      { role: 'reload', label: 'Neu laden' },
-      { role: 'resetZoom', label: 'Zoom zurücksetzen' },
-      { role: 'zoomIn', label: 'Vergrößern' },
-      { role: 'zoomOut', label: 'Verkleinern' },
+      { role: 'reload', label: 'Reload' },
+      { role: 'resetZoom', label: 'Reset zoom' },
+      { role: 'zoomIn', label: 'Zoom in' },
+      { role: 'zoomOut', label: 'Zoom out' },
       { type: 'separator' },
-      { role: 'togglefullscreen', label: 'Vollbild' },
-      { role: 'toggleDevTools', label: 'Entwicklerwerkzeuge' },
+      { role: 'togglefullscreen', label: 'Full screen' },
+      { role: 'toggleDevTools', label: 'Developer tools' },
     ],
   },
 ]));

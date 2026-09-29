@@ -1,8 +1,8 @@
 {
-  "name": "gw2-erfolgs-helfer",
-  "productName": "GW2 Erfolgs-Helfer",
-  "version": "0.1.0",
-  "description": "Guild Wars 2 Erfolge suchen, Run-Through aus dem Wiki und leichte AP finden.",
+  "name": "gw2-achievement-helper",
+  "productName": "GW2 Achievement Helper",
+  "version": "0.2.0",
+  "description": "Search Guild Wars 2 achievements, wiki-based run-throughs and easy AP.",
   "main": "electron/main.js",
   "private": true,
   "scripts": {
@@ -18,7 +18,7 @@
   },
   "build": {
     "appId": "de.gw2.erfolgshelfer",
-    "productName": "GW2 Erfolgs-Helfer",
+    "productName": "GW2 Achievement Helper",
     "directories": { "output": "dist" },
     "files": [
       "index.html",
@@ -35,12 +35,12 @@
     "nsis": {
       "oneClick": false,
       "allowToChangeInstallationDirectory": true,
-      "artifactName": "GW2-Erfolgs-Helfer-Setup-${version}.${ext}"
+      "artifactName": "GW2-Achievement-Helper-Setup-${version}.${ext}"
     },
     "portable": {
-      "artifactName": "GW2-Erfolgs-Helfer-Portable-${version}.${ext}"
+      "artifactName": "GW2-Achievement-Helper-Portable-${version}.${ext}"
     },
     "mac": { "target": "dmg", "icon": "icons/icon-512.png", "category": "public.app-category.games" },
-    "linux": { "target": "AppImage", "artifactName": "GW2-Erfolgs-Helfer-${version}.${ext}", "icon": "icons/icon-512.png", "category": "Game" }
+    "linux": { "target": "AppImage", "artifactName": "GW2-Achievement-Helper-${version}.${ext}", "icon": "icons/icon-512.png", "category": "Game" }
   }
 }
