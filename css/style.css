@@ -135,6 +135,9 @@ table.easy td.prog { min-width: 120px; }
 .r-Rare { color: #fcd00b; } .r-Exotic { color: #ffa405; } .r-Ascended { color: #fb3e8d; } .r-Legendary { color: #c78eff; }
 
 @media (max-width: 640px) {
+  header.top { position: static; padding: .5rem .8rem; gap: .4rem 1rem; }
+  .account { margin-left: 0; font-size: .85rem; }
+  main { padding: .8rem; }
   table.easy td:nth-child(1), table.easy th:nth-child(1) { display: none; }
   .ach-stat { width: 100%; }
 }

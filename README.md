@@ -18,6 +18,22 @@ Du brauchst keinen Build und keine Installation:
 - einen lokalen Server starten: `python3 -m http.server` und dann http://localhost:8000 öffnen, **oder**
 - das Repo über GitHub Pages hosten.
 
+## Als App installieren (Handy & PC)
+
+Das Tool ist eine installierbare Web-App (PWA). Dafür muss es über `http(s)` laufen, also z. B. über GitHub Pages oder `python3 -m http.server`:
+
+- **Android (Chrome):** Menü ⋮ → *App installieren* / *Zum Startbildschirm hinzufügen*
+- **iPhone (Safari):** Teilen-Symbol → *Zum Home-Bildschirm*
+- **PC (Chrome/Edge):** Installieren-Symbol rechts in der Adressleiste. Das Tool läuft danach als eigenes Programm im eigenen Fenster und hat einen Eintrag im Startmenü.
+
+Die App-Dateien funktionieren auch offline. Für API- und Wiki-Daten brauchst du Internet.
+
+### GitHub Pages einrichten
+
+Repo auf GitHub → *Settings* → *Pages* → *Source: Deploy from a branch* → Branch wählen → *Save*.
+Nach ein bis zwei Minuten läuft das Tool unter `https://<benutzername>.github.io/Gw2/`.
+(Auf dem kostenlosen GitHub-Plan geht Pages nur mit öffentlichen Repos.)
+
 ## API-Key
 
 Unter *Einstellungen* trägst du einen Key von https://account.arena.net/applications ein, mit den Rechten **account** und **progression**.
