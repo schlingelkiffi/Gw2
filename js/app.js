@@ -594,11 +594,22 @@
   }
 
   // Freischaltung aus dem Wiki: erster kurzer Satz/Absatz mit „unlock“; darin genannte Erfolge werden verlinkt.
+  const UNLOCK_RE = /\bunlock(s|ed)?\b|prerequisites?|requires? (the )?complet|after (completing|finishing)|must (first )?(complete|finish)|only (becomes )?available after|freigeschaltet|voraussetzung|déverrouill/i;
   function wikiUnlockHint(content) {
+    // Infobox-Feld „Prerequisite(s)“ zuerst
+    for (const label of content.querySelectorAll('th, dt, b, strong')) {
+      if (!/^(prerequisites?|requires|unlocked by|voraussetzung(en)?)\s*:?$/i.test(label.textContent.trim())) continue;
+      const val = label.matches('th, dt') ? label.nextElementSibling : label.parentElement;
+      const text = (val?.textContent || '').replace(label.textContent, '').replace(/\s+/g, ' ').trim().replace(/^:\s*/, '');
+      if (text.length > 2) {
+        const achs = [...(val?.querySelectorAll('a[data-wiki]') || [])].map((l) => S.byName?.get(norm(l.dataset.wiki))).filter(Boolean);
+        return { text: `Prerequisite: ${text}`, achs };
+      }
+    }
     for (const el of content.querySelectorAll('p, li, dd, td')) {
       if (el.querySelector('p, li, table')) continue;
       const text = el.textContent.replace(/\s+/g, ' ').trim();
-      if (text.length > 400 || !/\bunlock(s|ed)?\b|freigeschaltet|déverrouill/i.test(text)) continue;
+      if (text.length > 400 || !UNLOCK_RE.test(text)) continue;
       if (/mount unlock|skin unlock|unlocks? the (title|skin)/i.test(text) && !/after|complet|abschlie/i.test(text)) continue;
       const achs = [...el.querySelectorAll('a[data-wiki]')].map((l) => S.byName?.get(norm(l.dataset.wiki))).filter(Boolean);
       return { text, achs };
