@@ -439,13 +439,13 @@
         <ol class="steps">${order.map((i) => {
           const n = names[i];
           const apiDone = inf.finished || inf.bitsDone.has(i);
-          const done = apiDone || manual.has(i);
+          const done = apiDone || (!S.account && manual.has(i));
           if (hideDone && done) return '';
           const wikiLabel = wikiNames?.[i]?.label || n.label;
           const hint = !apiDone && content ? findWikiHint(content, wikiLabel) : null;
           const typeName = { Item: 'Gegenstand', Skin: 'Skin', Minipet: 'Miniatur', Text: '' }[n.type] ?? n.type;
           return `<li class="${done ? 'done' : ''}" data-bit="${i}">
-            <span class="check">${apiDone ? '✔' : `<input type="checkbox" class="manual" data-bit="${i}" ${manual.has(i) ? 'checked' : ''} title="Manuell abhaken">`}</span>
+            <span class="check">${apiDone ? '✔' : S.account ? '○' : `<input type="checkbox" class="manual" data-bit="${i}" ${manual.has(i) ? 'checked' : ''} title="Manuell abhaken (ohne API-Key)">`}</span>
             <div class="grow">
               <div>${n.icon ? `<img class="mini" src="${esc(n.icon)}" alt="">` : ''}
                 ${linkedAch(n) ? `<a href="#/a/${linkedAch(n).id}">${esc(n.label)}</a> ${stateBadge(linkedAch(n))}`
