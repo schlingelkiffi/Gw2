@@ -144,11 +144,20 @@
     setNav('search');
     view.innerHTML = `
       <div class="searchbox">
+        ${S.key ? '' : keyCardHtml()}
         <input id="q" type="search" placeholder="Erfolg suchen… (Name oder Beschreibung, z. B. „Sprung ins Ungewisse“)" autocomplete="off" value="${esc(S.query)}">
       </div>
       <div id="results"></div>`;
     const q = $('#q');
-    q.focus();
+    const homeKey = $('#home-key');
+    if (homeKey) {
+      const save = async () => {
+        if (await saveKey(homeKey.value, $('#home-key-info'))) setTimeout(showSearch, 1500);
+      };
+      $('#home-key-save').onclick = save;
+      homeKey.onkeydown = (e) => { if (e.key === 'Enter') save(); };
+      homeKey.focus();
+    } else q.focus();
     let t;
     q.oninput = () => { clearTimeout(t); t = setTimeout(() => { S.query = q.value; renderResults(); }, 120); };
     renderResults();
@@ -666,6 +675,41 @@
       ${rows.length > top.length ? `<p class="muted">Zeige die ersten 200 von ${rows.length}.</p>` : ''}`;
   }
 
+  // ---------- API-Key ----------
+  async function saveKey(raw, info) {
+    const key = raw.trim();
+    if (!key) { info.innerHTML = '<span class="err">Bitte einen API-Key einfügen.</span>'; return false; }
+    info.textContent = 'Prüfe Key…';
+    try {
+      const t = await GW2.tokenInfo(key);
+      const missing = ['account', 'progression'].filter((p) => !t.permissions.includes(p));
+      if (missing.length) { info.innerHTML = `<span class="err">Dem Key fehlen Rechte: ${missing.join(', ')}</span>`; return false; }
+      S.key = key;
+      Store.set('apiKey', key);
+      await loadProgress();
+      info.innerHTML = `<span class="ok-text">✔ Key „${esc(t.name)}“ gespeichert – ${S.progress.size} Erfolge mit Fortschritt geladen.</span>`;
+      return true;
+    } catch (e) {
+      info.innerHTML = `<span class="err">Ungültiger Key: ${esc(e.message)}</span>`;
+      return false;
+    }
+  }
+
+  function keyCardHtml() {
+    return `<div class="card key-card">
+      <h2>🔑 API-Key einfügen</h2>
+      <p class="muted">Damit das Tool weiß, was du schon hast: Erstelle auf
+        <a href="https://account.arena.net/applications" target="_blank" rel="noopener">account.arena.net/applications</a>
+        einen Key mit den Rechten <code>account</code> und <code>progression</code> und füge ihn hier ein.
+        Er wird nur lokal gespeichert und nur an die offizielle GW2-API gesendet.</p>
+      <div class="key-row">
+        <input id="home-key" type="password" placeholder="API-Key hier einfügen (Strg+V)" autocomplete="off">
+        <button id="home-key-save">Speichern</button>
+      </div>
+      <div id="home-key-info" class="muted"></div>
+    </div>`;
+  }
+
   // ---------- Einstellungen ----------
   function showSettings() {
     setNav('settings');
@@ -696,22 +740,7 @@
       </div>`;
     $('#s-lang').value = S.lang;
     $('#s-wiki').value = S.wikiLang;
-    $('#s-save').onclick = async () => {
-      const key = $('#s-key').value.trim();
-      const info = $('#s-key-info');
-      info.textContent = 'Prüfe Key…';
-      try {
-        const t = await GW2.tokenInfo(key);
-        const missing = ['account', 'progression'].filter((p) => !t.permissions.includes(p));
-        if (missing.length) { info.innerHTML = `<span class="err">Dem Key fehlen Rechte: ${missing.join(', ')}</span>`; return; }
-        S.key = key;
-        Store.set('apiKey', key);
-        await loadProgress();
-        info.innerHTML = `<span class="ok-text">✔ Key „${esc(t.name)}“ gespeichert – ${S.progress.size} Erfolge mit Fortschritt geladen.</span>`;
-      } catch (e) {
-        info.innerHTML = `<span class="err">Ungültiger Key: ${esc(e.message)}</span>`;
-      }
-    };
+    $('#s-save').onclick = () => saveKey($('#s-key').value, $('#s-key-info'));
     $('#s-clear').onclick = async () => {
       S.key = '';
       Store.set('apiKey', '');
