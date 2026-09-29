@@ -63,14 +63,6 @@
     S.easyRows = null;
   }
 
-  // Einheitliche Übersicht: erledigt / offen / benötigt.
-  function summaryPills(done, open, needed) {
-    if (!S.account) return '';
-    return `<p class="summary"><span class="pill ok">✔ ${done} erledigt</span> <span class="pill warn">○ ${open} offen</span>
-      ${needed ? `<span class="pill">benötigt: ${needed}</span>` : ''}
-      ${needed && done < needed ? `<span class="pill">noch ${needed - done}</span>` : ''}</p>`;
-  }
-
   async function loadStatic(force = false) {
     const data = await GW2.loadStatic(S.lang, { force, onProgress: status });
     indexStatic(data);
@@ -265,43 +257,49 @@
     const inf = Progress.info(a, p);
     const flags = (a.flags || []).filter((f) => !['CategoryDisplay', 'MoveToTop', 'IgnoreNearlyComplete', 'RepairOnLogin'].includes(f));
     const tierText = inf.tiers.map((t) => `${t.count} → ${t.points} AP`).join(' · ');
+    const requirement = stripTags(a.requirement).replace(/\s+/g, ' ').trim();
+
+    let status = '';
+    if (S.account) {
+      const count = inf.finished ? '✔ Abgeschlossen' : inf.maxCount > 1 ? `${inf.current} / ${inf.maxCount}` : 'Offen';
+      status = `<div class="focus-status">${bar(inf.frac)}
+        <span>${count}</span>
+        <span class="pill">${inf.earned}/${isFinite(inf.possible) ? inf.possible : '∞'} AP</span>
+        ${inf.next ? `<span class="pill warn">+${inf.next.points} AP bei ${inf.next.count}</span>` : ''}</div>`;
+    } else {
+      status = `<div class="focus-status"><span class="pill">${inf.perCycle} AP</span> <span class="muted">Kein API-Key – Fortschritt unbekannt</span></div>`;
+    }
 
     view.innerHTML = `
-      <p><a href="#/" class="link">← Zurück zur Suche</a></p>
-      <header class="ach-head">
+      <p><a href="javascript:history.back()" class="link">← Zurück</a></p>
+      <header class="focus-head">
         ${achIcon(a).replace('class="icon"', 'class="icon big"')}
         <div class="grow">
-          <div class="sub">${catPath(a)} · ID ${a.id}</div>
+          <div class="sub">${catPath(a)}</div>
           <h1>${esc(a.name)}</h1>
-          ${a.description ? `<p class="desc">${esc(stripTags(a.description))}</p>` : ''}
-          <p><strong>Anforderung:</strong> ${esc(stripTags(a.requirement).replace(/\s+/g, ' ')) || '—'}</p>
-          ${a.locked_text ? `<p class="muted"><strong>Freischaltung:</strong> ${esc(stripTags(a.locked_text))}</p>` : ''}
-          <p class="muted">Stufen: ${tierText || '—'}</p>
-          <div class="flags">${flags.map((f) => `<span class="pill">${esc(f)}</span>`).join(' ')}</div>
-          <div id="rewards"></div>
-        </div>
-        <div class="ach-stat">
-          ${S.account ? `
-            <div class="big-num">${inf.earned}<span>/${isFinite(inf.possible) ? inf.possible : '∞'} AP</span></div>
-            ${bar(inf.frac)}
-            <div class="muted">${inf.finished ? '✔ Abgeschlossen' : inf.maxCount ? `${inf.current} / ${inf.maxCount}` : 'Nicht begonnen'}</div>
-            ${inf.next ? `<div class="muted">Nächste Stufe: +${inf.next.points} AP in ${inf.next.steps} Schritt(en)</div>` : ''}`
-          : `<div class="big-num">${inf.perCycle}<span> AP</span></div><div class="muted">Kein API-Key – Fortschritt unbekannt</div>`}
-          <a class="btn" id="wiki-link" target="_blank" rel="noopener" href="${Wiki.searchUrl(S.wikiLang, a.name)}">Im Wiki öffnen ↗</a>
+          ${requirement ? `<p class="req">${esc(requirement)}</p>` : ''}
+          ${status}
         </div>
       </header>
-      <section id="prereq"></section>
-      <section id="category"></section>
-      <section id="steps"><h2>Run-Through</h2><p class="muted">Lade Schritte…</p></section>
-      <section id="guide"><h2>Wiki-Guide</h2><p class="muted">Lade Wiki-Seite…</p></section>`;
+      <section id="todo" class="todo"><h2>Was du noch tun musst</h2><p class="muted">Lade…</p></section>
+      <details id="done-box" class="box" hidden><summary></summary><div id="done-body"></div></details>
+      <details id="guide-box" class="box"><summary>📖 Kompletter Wiki-Guide</summary><div id="guide"><p class="muted">Lade Wiki-Seite…</p></div></details>
+      <details id="more-box" class="box"><summary>ℹ️ Details: Beschreibung, Belohnungen, Stufen, Kategorie</summary>
+        ${a.description ? `<p class="desc">${esc(stripTags(a.description))}</p>` : ''}
+        ${a.locked_text ? `<p class="muted"><strong>Freischaltung:</strong> ${esc(stripTags(a.locked_text))}</p>` : ''}
+        <p class="muted">Stufen: ${tierText || '—'} · ID ${a.id}</p>
+        <div class="flags">${flags.map((f) => `<span class="pill">${esc(f)}</span>`).join(' ')}</div>
+        <div id="rewards"></div>
+        <div id="category"></div>
+        <p><a class="btn" id="wiki-link" target="_blank" rel="noopener" href="${Wiki.searchUrl(S.wikiLang, a.name)}">Im Wiki öffnen ↗</a></p>
+      </details>`;
 
     rewardsHtml(a).then((h) => { if (token === S.viewToken) $('#rewards').innerHTML = h; });
-    renderPrereqs(a);
     renderCategory(a);
 
     const names = await bitNames(a, S.lang);
     if (token !== S.viewToken) return;
-    renderSteps(a, inf, names, null, null);
+    renderTodo(a, inf, names, null, null);
 
     try {
       const wiki = await loadWiki(a);
@@ -310,11 +308,11 @@
       const content = Wiki.sanitize(S.wikiLang, wiki.html);
       const wikiNames = S.wikiLang === S.lang ? names : await bitNames(wiki.ach, S.wikiLang);
       if (token !== S.viewToken) return;
-      renderSteps(a, inf, names, content, wikiNames);
+      renderTodo(a, inf, names, content, wikiNames);
       renderGuide(content, wiki.title);
     } catch (e) {
       if (token !== S.viewToken) return;
-      $('#guide').innerHTML = `<h2>Wiki-Guide</h2><p class="muted">Keine passende Wiki-Seite gefunden (${esc(e.message)}).
+      $('#guide').innerHTML = `<p class="muted">Keine passende Wiki-Seite gefunden (${esc(e.message)}).
         <a target="_blank" rel="noopener" href="${Wiki.searchUrl(S.wikiLang, a.name)}">Im Wiki suchen ↗</a></p>`;
     }
   }
@@ -344,44 +342,16 @@
     return !(a.bits || []).length && META_RE.test(stripTags(a.requirement)) && categoryIds(cat).length > 2;
   }
 
+  // Kategorie-Übersicht unter „Details“ (bei Meta-Erfolgen steht das Wichtige schon oben).
   function renderCategory(a) {
     const el = $('#category');
     const cat = S.catOf.get(a.id);
     const others = categoryIds(cat).filter((id) => id !== a.id).map((id) => S.ach.get(id)).filter(Boolean);
-    if (!others.length) { el.innerHTML = ''; return; }
-    const meta = isMeta(a);
-    const inf0 = Progress.info(a, S.progress.get(a.id));
-    const rows = others.map((oa) => ({ oa, inf: Progress.info(oa, S.progress.get(oa.id)) }))
-      .sort((x, y) => x.inf.finished - y.inf.finished);
-    const openCount = rows.filter((r) => !r.inf.finished).length;
-    const list = `<ol class="steps">${rows.map(({ oa, inf }) => `
-      <li class="${inf.finished ? 'done' : ''}"><span class="check">${inf.finished ? '✔' : '○'}</span>
-        <div class="grow"><a href="#/a/${oa.id}">${esc(oa.name)}</a>
-          <div class="sub" style="margin-left:0">${esc(stripTags(oa.requirement).replace(/\s+/g, ' '))}</div></div>
-        ${stateBadge(oa)}</li>`).join('')}</ol>`;
-    el.innerHTML = meta
-      ? `<h2>Zählt für diesen Meta-Erfolg ${S.account ? `<span class="pill warn">${openCount} offen</span>` : ''}</h2>
-         <p class="muted">„${esc(a.name)}“ bekommst du, indem du Erfolge aus der Kategorie „${esc(cat.name)}“ abschließt.
-           Offene stehen oben – tippe einen an für dessen Run-Through.</p>
-         ${summaryPills(inf0.finished ? inf0.maxCount : inf0.current, openCount, inf0.maxCount)}
-         ${list}
-         <p class="muted">Hinweis: Nicht immer zählt jeder Erfolg der Kategorie für den Meta – Details im Wiki-Guide unten.</p>`
-      : `<details><summary>Weitere Erfolge in „${esc(cat.name)}“ (${S.account ? `✔ ${others.length - openCount} erledigt · ○ ${openCount} offen` : others.length})</summary>${list}</details>`;
-  }
-
-  function renderPrereqs(a) {
-    const chain = prereqChain(a);
-    const el = $('#prereq');
-    if (!chain.length) { el.innerHTML = ''; return; }
-    const open = chain.filter((pa) => !Progress.info(pa, S.progress.get(pa.id)).finished);
-    el.innerHTML = `
-      <h2>Voraussetzungen ${S.account ? (open.length ? `<span class="pill warn">${open.length} offen</span>` : '<span class="pill ok">alle erfüllt</span>') : ''}</h2>
-      <p class="muted">Diese Erfolge musst du zuerst abschließen (in dieser Reihenfolge):</p>
-      <ol class="steps">${chain.map((pa) => {
-        const done = Progress.info(pa, S.progress.get(pa.id)).finished;
-        return `<li class="${done ? 'done' : ''}"><span class="check">${done ? '✔' : '○'}</span>
-          <a href="#/a/${pa.id}">${esc(pa.name)}</a> ${S.account ? '' : ''}<span class="sub">${catPath(pa)}</span></li>`;
-      }).join('')}</ol>`;
+    if (!others.length || isMeta(a)) { el.innerHTML = ''; return; }
+    const open = others.filter((oa) => !Progress.info(oa, S.progress.get(oa.id)).finished).length;
+    el.innerHTML = `<h3>Weitere Erfolge in „${esc(cat.name)}“ ${S.account ? `<span class="sub">✔ ${others.length - open} · ○ ${open}</span>` : ''}</h3>
+      <ol class="steps compact">${others.map((oa) => `<li class="${Progress.info(oa, S.progress.get(oa.id)).finished ? 'done' : ''}">
+        <a href="#/a/${oa.id}" class="grow">${esc(oa.name)}</a> ${stateBadge(oa)}</li>`).join('')}</ol>`;
   }
 
   // Sucht im Wiki-Inhalt das kleinste Element (Tabellenzeile, Listeneintrag, …), das den Text enthält.
@@ -416,71 +386,94 @@
     return n.type === 'Text' ? S.byName?.get(norm(n.label).replace(/[.!]+$/, '')) : null;
   }
 
-  function renderSteps(a, inf, names, content, wikiNames) {
-    const el = $('#steps');
-    const manual = new Set(Store.get(manualKey(a.id), []));
-    const hideDone = Store.get('hideDone', false);
-    const bits = a.bits || [];
+  // Hauptbereich: nur das, was noch zu tun ist. Erledigtes landet eingeklappt darunter.
+  function renderTodo(a, inf, names, content, wikiNames) {
+    const el = $('#todo');
+    const todo = [];
+    const done = [];
+    const item = (html, cls = '') => `<li class="${cls}">${html}</li>`;
+    const achItem = (oa, mark) => item(`<span class="check">${mark}</span><div class="grow">
+      <a href="#/a/${oa.id}">${esc(oa.name)}</a> ${stateBadge(oa)}
+      <div class="sub" style="margin-left:0">${esc(stripTags(oa.requirement).replace(/\s+/g, ' '))}</div></div>`);
+    let lead = '';
+    let needsGuide = false;
 
-    let body = '';
-    if (bits.length) {
-      const doneCount = bits.filter((_, i) => inf.finished || inf.bitsDone.has(i)).length;
+    // 1. Offene Voraussetzungen zuerst
+    for (const pa of prereqChain(a)) {
+      if (Progress.info(pa, S.progress.get(pa.id)).finished) continue;
+      todo.push(item(`<span class="check">🔒</span><div class="grow"><strong>Zuerst abschließen:</strong>
+        <a href="#/a/${pa.id}">${esc(pa.name)}</a>
+        <div class="sub" style="margin-left:0">${esc(stripTags(pa.requirement).replace(/\s+/g, ' '))}</div></div>`));
+    }
+    if (inf.needsUnlock) todo.push(item(`<span class="check">🔒</span><div class="grow"><strong>Erst freischalten:</strong> ${esc(stripTags(a.locked_text) || 'siehe Wiki-Guide')}</div>`));
+
+    const bits = a.bits || [];
+    const manual = new Set(Store.get(manualKey(a.id), []));
+    if (inf.finished) {
+      lead = '<p class="ok-text">✔ Abgeschlossen – hier gibt es nichts mehr zu tun.</p>';
+    } else if (bits.length) {
+      // 2a. Einzelschritte (Sammlungen, Orte, Story-Kapitel …)
+      const doneCount = bits.filter((_, i) => inf.bitsDone.has(i)).length;
       const needed = inf.maxCount && inf.maxCount < bits.length ? inf.maxCount : bits.length;
-      const order = bits.map((_, i) => i).sort((x, y) => {
-        const dx = inf.finished || inf.bitsDone.has(x), dy = inf.finished || inf.bitsDone.has(y);
-        return dx - dy || x - y;
+      if (S.account) {
+        lead = `<p class="summary"><span class="pill warn">Noch ${Math.max(0, needed - doneCount)}</span>
+          <span class="pill">${doneCount} / ${needed} geschafft</span>
+          ${needed < bits.length ? `<span class="muted">– ${needed} von ${bits.length} reichen, such dir die leichtesten aus.</span>` : ''}</p>`;
+      }
+      bits.forEach((_, i) => {
+        const n = names[i];
+        const apiDone = inf.bitsDone.has(i);
+        const wikiLabel = wikiNames?.[i]?.label || n.label;
+        const linked = linkedAch(n);
+        const label = linked
+          ? `<a href="#/a/${linked.id}">${esc(n.label)}</a> ${stateBadge(linked)}`
+          : `<span class="${n.rarity ? `r-${esc(n.rarity)}` : ''}">${esc(n.label)}</span>`;
+        const typeName = { Item: 'Gegenstand', Skin: 'Skin', Minipet: 'Miniatur' }[n.type] || '';
+        const head = `<div>${n.icon ? `<img class="mini" src="${esc(n.icon)}" alt="">` : ''}${label}
+          ${typeName ? `<span class="sub">${typeName}</span>` : ''}
+          ${n.type !== 'Text' ? `<a class="sub" href="${wikiRoute(S.wikiLang, wikiLabel)}">Wiki-Seite</a>` : ''}</div>`;
+        if (apiDone) { done.push(item(`<span class="check">✔</span><div class="grow">${head}</div>`, 'done')); return; }
+        const hint = content ? findWikiHint(content, wikiLabel) : null;
+        const mark = S.account ? '○' : `<input type="checkbox" class="manual" data-bit="${i}" ${manual.has(i) ? 'checked' : ''} title="Manuell abhaken (ohne API-Key)">`;
+        todo.push(item(`<span class="check">${mark}</span><div class="grow">${head}
+          ${hint ? `<div class="hint wiki">${hint}</div>` : ''}
+          ${!hint && n.type !== 'Text' ? `<button class="small acq" data-bit="${i}">Wie bekomme ich das? (Wiki)</button><div class="acq-out wiki"></div>` : ''}
+          ${!hint && n.type === 'Text' && !linked && content ? '<div class="sub" style="margin-left:0">Kein eigener Hinweis gefunden – siehe Wiki-Guide unten.</div>' : ''}
+        </div>`, !S.account && manual.has(i) ? 'done' : ''));
       });
-      body = `
-        <div class="steps-head">
-          ${S.account ? summaryPills(doneCount, bits.length - doneCount, needed) : `<span>${bits.length} Schritte</span>`}
-          <label><input type="checkbox" id="hide-done" ${hideDone ? 'checked' : ''}> Erledigte ausblenden</label>
-        </div>
-        ${needed < bits.length ? `<p class="muted">Du brauchst <strong>${needed}</strong> von ${bits.length} – nicht alle müssen erledigt werden.</p>` : ''}
-        <ol class="steps">${order.map((i) => {
-          const n = names[i];
-          const apiDone = inf.finished || inf.bitsDone.has(i);
-          const done = apiDone || (!S.account && manual.has(i));
-          if (hideDone && done) return '';
-          const wikiLabel = wikiNames?.[i]?.label || n.label;
-          const hint = !apiDone && content ? findWikiHint(content, wikiLabel) : null;
-          const typeName = { Item: 'Gegenstand', Skin: 'Skin', Minipet: 'Miniatur', Text: '' }[n.type] ?? n.type;
-          return `<li class="${done ? 'done' : ''}" data-bit="${i}">
-            <span class="check">${apiDone ? '✔' : S.account ? '○' : `<input type="checkbox" class="manual" data-bit="${i}" ${manual.has(i) ? 'checked' : ''} title="Manuell abhaken (ohne API-Key)">`}</span>
-            <div class="grow">
-              <div>${n.icon ? `<img class="mini" src="${esc(n.icon)}" alt="">` : ''}
-                ${linkedAch(n) ? `<a href="#/a/${linkedAch(n).id}">${esc(n.label)}</a> ${stateBadge(linkedAch(n))}`
-                  : `<span class="${n.rarity ? `r-${esc(n.rarity)}` : ''}">${esc(n.label)}</span>`}
-                ${typeName ? `<span class="sub">${typeName}</span>` : ''}
-                ${n.type !== 'Text' ? `<a class="sub" href="${wikiRoute(S.wikiLang, wikiLabel)}">Wiki-Seite</a>` : ''}
-              </div>
-              ${hint ? `<details class="hint" open><summary>Wiki-Hinweis</summary><div class="wiki">${hint}</div></details>` : ''}
-              ${!apiDone && !hint && n.type !== 'Text' ? `<button class="small acq" data-bit="${i}">Wie bekomme ich das? (Wiki)</button><div class="acq-out wiki"></div>` : ''}
-            </div>
-          </li>`;
-        }).join('')}</ol>`;
-    } else if (inf.tiers.length) {
-      const maxC = inf.maxCount;
-      const cur = inf.finished ? maxC : Math.min(inf.current, maxC);
-      body = `${isMeta(a) ? '' : S.account ? `<p class="summary"><span class="pill ok">✔ ${cur} geschafft</span>
-          <span class="pill warn">○ ${maxC - cur} fehlen</span> <span class="pill">benötigt: ${maxC}</span></p>` : ''}
-        <ol class="steps">${inf.tiers.map((t) => {
-        const done = inf.finished || inf.current >= t.count;
-        return `<li class="${done ? 'done' : ''}"><span class="check">${done ? '✔' : '○'}</span>
-          <div class="grow">Stufe: ${t.count}× erreichen <span class="pill">${t.points} AP</span>
-          ${!done && S.account ? `<span class="sub">noch ${t.count - inf.current}</span>` : ''}</div></li>`;
-      }).join('')}</ol>
-      <p class="muted">${isMeta(a) ? 'Jede Stufe zählt abgeschlossene Erfolge aus der Liste „Zählt für diesen Meta-Erfolg“ oben.' : 'Dieser Erfolg hat keine Einzelschritte – Details stehen im Wiki-Guide unten.'}</p>`;
+    } else if (isMeta(a)) {
+      // 2b. Meta-Erfolg: offene Erfolge der Kategorie
+      const cat = S.catOf.get(a.id);
+      const others = categoryIds(cat).filter((id) => id !== a.id).map((id) => S.ach.get(id)).filter(Boolean);
+      for (const oa of others) {
+        const f = Progress.info(oa, S.progress.get(oa.id)).finished;
+        (f ? done : todo).push(achItem(oa, f ? '✔' : '○'));
+      }
+      if (S.account) {
+        lead = `<p class="summary"><span class="pill warn">Noch ${Math.max(0, inf.maxCount - inf.current)} Erfolge</span>
+          <span class="pill">${inf.current} / ${inf.maxCount} geschafft</span>
+          <span class="muted">– aus diesen offenen Erfolgen der Kategorie „${esc(cat.name)}“:</span></p>`;
+      }
+    } else {
+      // 2c. Zähl- oder Einzel-Erfolg: die Anforderung ist die Aufgabe, Anleitung aus dem Wiki
+      needsGuide = true;
+      const rest = inf.maxCount - inf.current;
+      todo.push(item(`<span class="check">○</span><div class="grow">
+        ${S.account && inf.maxCount > 1 ? `<strong>Noch ${rest.toLocaleString('de-DE')}×</strong> – ` : ''}${esc(stripTags(a.requirement).replace(/\s+/g, ' ')) || 'Siehe Wiki-Guide'}
+        ${inf.tiers.length > 1 && inf.next ? `<div class="sub" style="margin-left:0">Nächste Stufe bei ${inf.next.count} (+${inf.next.points} AP)</div>` : ''}</div>`));
     }
 
-    el.innerHTML = `<h2>Run-Through</h2>
-      ${!S.account ? '<p class="muted">Ohne API-Key wird dein Fortschritt nicht erkannt – du kannst aber manuell abhaken.</p>' : ''}
-      ${inf.needsUnlock ? '<p class="warn-box">⚠ Dieser Erfolg muss erst freigeschaltet werden (siehe „Freischaltung“ oben).</p>' : ''}
-      ${body || '<p class="muted">Keine Schritte bekannt.</p>'}`;
+    el.innerHTML = `<h2>Was du noch tun musst</h2>${lead}
+      ${todo.length ? `<ol class="steps">${todo.join('')}</ol>` : ''}
+      ${needsGuide ? '<p class="muted">So geht’s: siehe Wiki-Guide direkt darunter.</p>' : ''}`;
 
-    $('#hide-done', el)?.addEventListener('change', (e) => {
-      Store.set('hideDone', e.target.checked);
-      renderSteps(a, inf, names, content, wikiNames);
-    });
+    const doneBox = $('#done-box');
+    doneBox.hidden = !done.length;
+    doneBox.querySelector('summary').textContent = `✔ Bereits erledigt (${done.length})`;
+    $('#done-body').innerHTML = `<ol class="steps">${done.join('')}</ol>`;
+    // Ohne konkrete Schritte ist der Wiki-Guide die Anleitung -> aufklappen
+    $('#guide-box').open = needsGuide && !inf.finished;
+
     el.querySelectorAll('input.manual').forEach((cb) => cb.addEventListener('change', () => {
       const i = +cb.dataset.bit;
       cb.checked ? manual.add(i) : manual.delete(i);
@@ -513,8 +506,8 @@
 
   function renderGuide(content, title) {
     const el = $('#guide');
-    el.innerHTML = `<h2>Wiki-Guide <a class="sub" href="${wikiRoute(S.wikiLang, title)}">${esc(title)}</a></h2>
-      <p class="muted">Inhalt aus dem offiziellen Guild Wars 2 Wiki (CC BY-NC-SA). Bilder anklicken zum Vergrößern, Chat-Codes anklicken zum Kopieren.</p>`;
+    el.innerHTML = `<p class="muted">Aus dem Guild Wars 2 Wiki: <a href="${wikiRoute(S.wikiLang, title)}">${esc(title)}</a> (CC BY-NC-SA).
+      Bilder antippen zum Vergrößern, Chat-Codes antippen zum Kopieren.</p>`;
     renderSections(el, content);
   }
 

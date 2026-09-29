@@ -82,6 +82,22 @@ img.mini { width: 22px; height: 22px; vertical-align: middle; border-radius: 3px
 .flags { display: flex; gap: .3rem; flex-wrap: wrap; }
 .rewards { margin-top: .6rem; display: flex; gap: .3rem; flex-wrap: wrap; align-items: center; }
 
+/* Fokus-Ansicht eines Erfolgs */
+.focus-head { display: flex; gap: 1rem; align-items: flex-start; background: var(--panel); padding: 1rem 1.2rem; border-radius: 10px; border: 1px solid var(--line); }
+.focus-head h1 { margin: .1rem 0 .3rem; }
+.focus-head .sub { margin-left: 0; }
+.focus-head .req { font-size: 1.05rem; margin: .2rem 0 .6rem; }
+.focus-status { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; }
+.focus-status .bar { flex: 1 1 140px; margin: 0; height: 8px; }
+.todo h2 { border-bottom-color: var(--accent); }
+.todo .hint { margin-top: .4rem; font-size: .9rem; }
+details.box { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: .6rem .9rem; margin: .8rem 0; }
+details.box > summary { font-weight: 600; }
+details.box[open] > summary { margin-bottom: .5rem; }
+#guide > details { background: var(--panel-2); }
+ol.steps.compact > li { padding: .35rem .6rem; align-items: center; }
+details.box h3 { font-size: 1rem; margin: 1rem 0 .4rem; }
+
 ol.steps { list-style: none; padding: 0; margin: .5rem 0; counter-reset: step; }
 ol.steps > li {
   display: flex; gap: .7rem; padding: .55rem .7rem; border: 1px solid var(--line); border-radius: 8px; margin-bottom: .4rem; background: var(--panel);
