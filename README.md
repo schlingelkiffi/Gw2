@@ -10,7 +10,30 @@ Ein Web-Tool für Guild-Wars-2-Erfolge, das komplett im Browser läuft:
   - den **kompletten Wiki-Guide**, aufgeteilt in Abschnitte. Walkthrough, Ziele und Sammlung sind dabei aufgeklappt.
 - **Leichte AP**: Alle offenen Erfolge, sortiert nach geschätzter Leichtigkeit (AP der nächsten Stufe ÷ √fehlende Schritte × Fortschritt). Du kannst nach Gruppe, PvP, Wiederholbarkeit, gesperrten Erfolgen und Mindest-Fortschritt filtern. Tägliche und nicht mehr kategorisierte (meist unerreichbare) Erfolge sind ausgeblendet.
 
-## Starten
+## Desktop-Programm (Windows/Linux)
+
+Das Programm bietet zusätzlich zur Web-Version:
+
+- **Wiki direkt im Programm:** Wiki-Links (Wegmarken, Orte, NPCs, Items) öffnen sich im Programm. Mit *← Zurück* oder Alt+← kommst du zurück.
+- **Bilder anklicken** öffnet sie groß, als Originalbild aus dem Wiki (z. B. Screenshots von Orten).
+- **Chat-Codes** wie `[&BDAEAAA=]` (Wegmarken, Sehenswürdigkeiten) kopierst du per Klick und fügst sie im Spiel mit Strg+V in den Chat ein. Im Chat klickst du den Link an, dann zeigt dir die Karte den Ort.
+- Links auf andere Seiten öffnen sich im normalen Browser.
+
+**Herunterladen:** Auf GitHub unter *Actions* → *Desktop-App bauen* → neuester Lauf → Artefakt **GW2-Erfolgs-Helfer-win**.
+Das ZIP enthält den Installer (`…-Setup-….exe`) und eine portable Version (`…-Portable-….exe`, läuft ohne Installation).
+Wenn du einen Tag `v…` pushst (z. B. `v0.1.0`), hängt der Workflow die Dateien außerdem an ein GitHub-Release.
+
+> Das Programm ist nicht signiert. Windows SmartScreen warnt deshalb beim ersten Start: *Weitere Informationen* → *Trotzdem ausführen*.
+
+**Selbst bauen:** Du brauchst [Node.js](https://nodejs.org) 20+.
+
+```bash
+npm install
+npm start          # Programm direkt starten
+npm run dist:win   # Windows-Installer + portable .exe nach dist/
+```
+
+## Starten (Web-Version)
 
 Du brauchst keinen Build und keine Installation:
 
@@ -47,6 +70,7 @@ Der Key bleibt in deinem Browser (localStorage) und wird nur an `api.guildwars2.
 | `js/wiki.js` | Wiki-Suche (per Spiel-ID über Semantic MediaWiki, sonst per Name), Parsen, HTML-Bereinigung |
 | `js/progress.js` | AP, Stufen, Fortschritt und Leichtigkeits-Score |
 | `js/app.js` | Oberfläche und Routing (`#/`, `#/a/<id>`, `#/easy`, `#/settings`) |
+| `electron/main.js` | Desktop-Hülle (Fenster, externe Links im Browser, Menü) |
 | `js/db.js` | IndexedDB-Cache (die Erfolgsdaten werden 7 Tage gecacht) |
 
 Die Wiki-Inhalte stammen aus dem [Guild Wars 2 Wiki](https://wiki.guildwars2.com) (CC BY-NC-SA 3.0).

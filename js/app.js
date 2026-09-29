@@ -386,7 +386,7 @@
               <div>${n.icon ? `<img class="mini" src="${esc(n.icon)}" alt="">` : ''}
                 <span class="${n.rarity ? `r-${esc(n.rarity)}` : ''}">${esc(n.label)}</span>
                 ${typeName ? `<span class="sub">${typeName}</span>` : ''}
-                ${n.type !== 'Text' ? `<a class="sub" target="_blank" rel="noopener" href="${Wiki.searchUrl(S.wikiLang, wikiLabel)}">Wiki ↗</a>` : ''}
+                ${n.type !== 'Text' ? `<a class="sub" href="${wikiRoute(S.wikiLang, wikiLabel)}">Wiki-Seite</a>` : ''}
               </div>
               ${hint ? `<details class="hint" open><summary>Wiki-Hinweis</summary><div class="wiki">${hint}</div></details>` : ''}
               ${!apiDone && !hint && n.type !== 'Text' ? `<button class="small acq" data-bit="${i}">Wie bekomme ich das? (Wiki)</button><div class="acq-out wiki"></div>` : ''}
@@ -428,7 +428,7 @@
         const res = await Wiki.acquisition(S.wikiLang, { type: n.type, id: n.id, name: n.label });
         if (!res) throw new Error('Keine Wiki-Seite gefunden');
         const node = Wiki.sanitize(S.wikiLang, res.html);
-        out.innerHTML = `<div class="sub">Aus <a target="_blank" rel="noopener" href="${Wiki.pageUrl(S.wikiLang, res.title)}">${esc(res.title)}</a>${res.sectionName ? ` › ${esc(res.sectionName)}` : ''}</div>`;
+        out.innerHTML = `<div class="sub">Aus <a href="${wikiRoute(S.wikiLang, res.title)}">${esc(res.title)}</a>${res.sectionName ? ` › ${esc(res.sectionName)}` : ''}</div>`;
         out.appendChild(node);
         btn.remove();
       } catch (e) {
@@ -444,9 +444,13 @@
 
   function renderGuide(content, title) {
     const el = $('#guide');
-    el.innerHTML = `<h2>Wiki-Guide <a class="sub" target="_blank" rel="noopener" href="${Wiki.pageUrl(S.wikiLang, title)}">${esc(title)} ↗</a></h2>
-      <p class="muted">Inhalt aus dem offiziellen Guild Wars 2 Wiki (CC BY-NC-SA).</p>`;
-    // In Abschnitte (h2) aufteilen, relevante Abschnitte aufgeklappt.
+    el.innerHTML = `<h2>Wiki-Guide <a class="sub" href="${wikiRoute(S.wikiLang, title)}">${esc(title)}</a></h2>
+      <p class="muted">Inhalt aus dem offiziellen Guild Wars 2 Wiki (CC BY-NC-SA). Bilder anklicken zum Vergrößern, Chat-Codes anklicken zum Kopieren.</p>`;
+    renderSections(el, content);
+  }
+
+  // Wiki-Inhalt in Abschnitte (h2) aufteilen; relevante Abschnitte aufgeklappt.
+  function renderSections(el, content, openAll = false) {
     let current = document.createElement('div');
     current.className = 'wiki intro';
     el.appendChild(current);
@@ -454,8 +458,10 @@
       if (node.nodeType === 1 && node.tagName === 'H2') {
         const name = node.textContent.trim();
         const det = document.createElement('details');
-        det.open = OPEN_SECTIONS.test(name);
+        det.open = openAll || OPEN_SECTIONS.test(name);
         det.innerHTML = `<summary>${esc(name)}</summary>`;
+        const anchor = node.querySelector('[id]');
+        if (anchor) det.id = anchor.id;
         current = document.createElement('div');
         current.className = 'wiki';
         det.appendChild(current);
@@ -466,6 +472,85 @@
     }
     bindAnchors(el);
   }
+
+  const wikiRoute = (lang, title) => `#/wiki/${lang}/${encodeURIComponent(title)}`;
+
+  // ---------- Wiki-Seite innerhalb der App ----------
+  async function showWikiPage(lang, title) {
+    setNav(null);
+    const token = ++S.viewToken;
+    const [pageTitle, anchor] = title.split('#');
+    view.innerHTML = `
+      <p><a href="javascript:history.back()" class="link">← Zurück</a></p>
+      <h1>${esc(pageTitle)}</h1>
+      <div id="wiki-page"><p class="muted">Lade Wiki-Seite…</p></div>`;
+    try {
+      const res = await Wiki.page(lang, pageTitle);
+      if (token !== S.viewToken) return;
+      const content = Wiki.sanitize(lang, res.html);
+      view.querySelector('h1').innerHTML = `${esc(res.title)}
+        <a class="sub" target="_blank" rel="noopener" href="${Wiki.pageUrl(lang, res.title)}">im Browser ↗</a>`;
+      const el = $('#wiki-page');
+      el.innerHTML = '';
+      renderSections(el, content, true);
+      if (anchor) document.getElementById(anchor)?.scrollIntoView();
+    } catch (e) {
+      if (token !== S.viewToken) return;
+      $('#wiki-page').innerHTML = `<p class="err">Seite konnte nicht geladen werden: ${esc(e.message)}</p>
+        <a target="_blank" rel="noopener" href="${Wiki.searchUrl(lang, pageTitle)}">Im Wiki suchen ↗</a>`;
+    }
+  }
+
+  // ---------- Bild-Großansicht & Chat-Codes ----------
+  function openLightbox(src, caption, fileTitle, lang) {
+    const box = $('#lightbox');
+    box.innerHTML = `<figure>
+      <img src="${esc(src)}" alt="">
+      <figcaption>${esc(caption || '')}
+        ${fileTitle ? `<a target="_blank" rel="noopener" href="${Wiki.pageUrl(lang, fileTitle)}">Bildseite ↗</a>` : ''}
+        <span class="muted">· Klick oder Esc zum Schließen</span></figcaption></figure>`;
+    box.hidden = false;
+  }
+
+  async function copyText(text) {
+    try {
+      await navigator.clipboard.writeText(text);
+    } catch {
+      const ta = document.createElement('textarea');
+      ta.value = text;
+      document.body.appendChild(ta);
+      ta.select();
+      document.execCommand('copy');
+      ta.remove();
+    }
+  }
+
+  document.addEventListener('click', (e) => {
+    const chat = e.target.closest('button.chatlink');
+    if (chat) {
+      e.preventDefault();
+      copyText(chat.dataset.code).then(() => toast(`${chat.dataset.code} kopiert – im Spiel mit Strg+V in den Chat einfügen.`));
+      chat.classList.add('copied');
+      setTimeout(() => chat.classList.remove('copied'), 1200);
+      return;
+    }
+    if (e.ctrlKey || e.metaKey || e.shiftKey) return; // Mit Modifikator: normal im Browser öffnen
+    const link = e.target.closest('a[data-file], a[data-wiki]');
+    const img = e.target.closest('.wiki img');
+    if (link?.dataset.wiki) {
+      e.preventDefault();
+      location.hash = wikiRoute(link.dataset.wikiLang || S.wikiLang, link.dataset.wiki);
+      return;
+    }
+    if (img && (link?.dataset.file || !e.target.closest('a'))) {
+      if (img.naturalWidth && img.naturalWidth < 40 && !link) return; // Mini-Symbole ignorieren
+      e.preventDefault();
+      const caption = img.closest('.thumb, .gallerybox, figure')?.querySelector('.thumbcaption, .gallerytext, figcaption')?.textContent.trim() || img.alt;
+      openLightbox(Wiki.fullImageUrl(img.currentSrc || img.src), caption, link?.dataset.file, S.wikiLang);
+    }
+  });
+
+  document.addEventListener('keydown', (e) => { if (e.key === 'Escape') $('#lightbox').hidden = true; });
 
   function bindAnchors(root) {
     root.querySelectorAll('a[data-anchor]').forEach((a) => a.addEventListener('click', (e) => {
@@ -659,7 +744,10 @@
   function route() {
     const h = location.hash.slice(1) || '/';
     window.scrollTo(0, 0);
-    if (h.startsWith('/a/')) showAchievement(+h.slice(3));
+    $('#lightbox').hidden = true;
+    const wm = h.match(/^\/wiki\/(\w+)\/(.+)$/);
+    if (wm) showWikiPage(wm[1], decodeURIComponent(wm[2]));
+    else if (h.startsWith('/a/')) showAchievement(+h.slice(3));
     else if (h === '/easy') showEasy();
     else if (h === '/settings') showSettings();
     else showSearch();

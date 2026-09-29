@@ -83,10 +83,20 @@ const Wiki = (() => {
           el.dataset.anchor = decodeURIComponent(href.slice(1));
           el.setAttribute('href', 'javascript:void(0)');
         } else {
-          if (href.startsWith('/')) el.setAttribute('href', b + href);
+          if (href.startsWith('/') && !href.startsWith('//')) el.setAttribute('href', b + href);
           else if (/^\s*javascript:/i.test(href)) el.removeAttribute('href');
           el.setAttribute('target', '_blank');
           el.setAttribute('rel', 'noopener');
+          // Interne Wiki-Links innerhalb der App öffnen, Bild-Links in der Großansicht.
+          const m = (el.getAttribute('href') || '').match(/^https?:\/\/[^/]*guildwars2\.com\/wiki\/([^?]+)$/);
+          if (m && !el.classList.contains('new')) {
+            const title = decodeURIComponent(m[1]).replace(/_/g, ' ');
+            if (/^(File|Datei|Image|Bild):/i.test(title)) el.dataset.file = title;
+            else if (!/^(Special|Spezial|Category|Kategorie|Template|Vorlage|User|Benutzer):/i.test(title)) {
+              el.dataset.wiki = title;
+              el.dataset.wikiLang = lang;
+            }
+          }
         }
       }
       if (el.tagName === 'IMG') {
@@ -97,7 +107,51 @@ const Wiki = (() => {
         el.setAttribute('loading', 'lazy');
       }
     });
+    markChatLinks(root);
     return root.querySelector('.mw-parser-output') || root;
+  }
+
+  // Chat-Codes wie [&BDAEAAA=] (Wegmarken, Sehenswürdigkeiten, Items) in Kopier-Knöpfe umwandeln.
+  const CHAT_RE = /\[&[A-Za-z0-9+/]{4,}={0,2}\]/g;
+  function chatButton(doc, code) {
+    const btn = doc.createElement('button');
+    btn.type = 'button';
+    btn.className = 'chatlink';
+    btn.dataset.code = code;
+    btn.title = 'Kopieren und im Spiel in den Chat einfügen';
+    btn.textContent = code;
+    return btn;
+  }
+  function markChatLinks(root) {
+    const doc = root.ownerDocument;
+    root.querySelectorAll('input').forEach((inp) => {
+      const v = (inp.getAttribute('value') || '').trim();
+      if (/^\[&[A-Za-z0-9+/]+=*\]$/.test(v)) inp.replaceWith(chatButton(doc, v));
+      else inp.remove();
+    });
+    const walker = doc.createTreeWalker(root, NodeFilter.SHOW_TEXT);
+    const hits = [];
+    while (walker.nextNode()) {
+      const n = walker.currentNode;
+      CHAT_RE.lastIndex = 0;
+      if (CHAT_RE.test(n.nodeValue) && !n.parentElement.closest('button')) hits.push(n);
+    }
+    for (const n of hits) {
+      const frag = doc.createDocumentFragment();
+      let last = 0;
+      n.nodeValue.replace(CHAT_RE, (code, idx) => {
+        frag.append(n.nodeValue.slice(last, idx), chatButton(doc, code));
+        last = idx + code.length;
+      });
+      frag.append(n.nodeValue.slice(last));
+      n.replaceWith(frag);
+    }
+  }
+
+  // Aus einer Vorschaugrafik (…/images/thumb/a/ab/X.jpg/300px-X.jpg) das Originalbild ableiten.
+  function fullImageUrl(src) {
+    const m = src.match(/^(.*\/images)\/thumb\/(.+)\/[^/]+$/);
+    return m ? `${m[1]}/${m[2]}` : src;
   }
 
   // Erwerbs-/Fundort-Abschnitt einer Item-/Skin-/Mini-Seite laden.
@@ -114,5 +168,16 @@ const Wiki = (() => {
     return part ? { title: meta.parse.title, sectionName: sec?.line, html: part.html } : null;
   }
 
-  return { base, pageUrl, searchUrl, findPage, parse, sanitize, acquisition };
+    // Beliebige Wiki-Seite laden; falls der Titel nicht existiert, per Suche auflösen.
+  async function page(lang, title) {
+    try {
+      return await parse(lang, title);
+    } catch (e) {
+      const found = await findByName(lang, title, null);
+      if (!found) throw e;
+      return parse(lang, found);
+    }
+  }
+
+  return { base, pageUrl, searchUrl, findPage, parse, page, sanitize, acquisition, fullImageUrl };
 })();

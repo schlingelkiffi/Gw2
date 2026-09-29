@@ -1,0 +1,46 @@
+{
+  "name": "gw2-erfolgs-helfer",
+  "productName": "GW2 Erfolgs-Helfer",
+  "version": "0.1.0",
+  "description": "Guild Wars 2 Erfolge suchen, Run-Through aus dem Wiki und leichte AP finden.",
+  "main": "electron/main.js",
+  "private": true,
+  "scripts": {
+    "start": "electron .",
+    "dist": "electron-builder",
+    "dist:win": "electron-builder --win",
+    "dist:linux": "electron-builder --linux",
+    "dist:mac": "electron-builder --mac"
+  },
+  "devDependencies": {
+    "electron": "^33.0.0",
+    "electron-builder": "^25.1.8"
+  },
+  "build": {
+    "appId": "de.gw2.erfolgshelfer",
+    "productName": "GW2 Erfolgs-Helfer",
+    "directories": { "output": "dist" },
+    "files": [
+      "index.html",
+      "manifest.webmanifest",
+      "css/**",
+      "js/**",
+      "icons/**",
+      "electron/**"
+    ],
+    "win": {
+      "target": ["nsis", "portable"],
+      "icon": "icons/icon-512.png"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "artifactName": "GW2-Erfolgs-Helfer-Setup-${version}.${ext}"
+    },
+    "portable": {
+      "artifactName": "GW2-Erfolgs-Helfer-Portable-${version}.${ext}"
+    },
+    "mac": { "target": "dmg", "icon": "icons/icon-512.png", "category": "public.app-category.games" },
+    "linux": { "target": "AppImage", "artifactName": "GW2-Erfolgs-Helfer-${version}.${ext}", "icon": "icons/icon-512.png", "category": "Game" }
+  }
+}
