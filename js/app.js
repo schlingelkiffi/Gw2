@@ -319,8 +319,9 @@
         if (section) content = section;
       }
       if (inf.needsUnlock || !p) {
-        const uh = wikiUnlockHint(content);
-        if (uh) S.wikiUnlock.set(a.id, uh);
+        const uh = wikiUnlockHint(content) || {};
+        uh.partOf = wikiPartOf(content, wiki.title);
+        S.wikiUnlock.set(a.id, uh);
       }
       if (!requirement) {
         const wr = section ? sectionRequirement(section, wikiName) : wikiRequirement(content);
@@ -628,6 +629,19 @@
     return null;
   }
 
+  // Einleitung „… part of the third step of the Skyscale collection“ -> verlinkte Übersichtsseite(n)
+  function wikiPartOf(content, selfTitle) {
+    for (const p of content.querySelectorAll('p')) {
+      const text = p.textContent;
+      if (!/\b(part|step|chapter|stage)\b.*\bof\b|\bteil\b/i.test(text)) continue;
+      const links = [...p.querySelectorAll('a[data-wiki]')]
+        .map((l) => l.dataset.wiki)
+        .filter((t) => norm(t) !== norm(selfTitle) && !/achievement|erfolg/i.test(t) && !S.byName?.has(norm(t)));
+      if (links.length) return [...new Set(links)];
+    }
+    return [];
+  }
+
   // Anforderung: API-Text, sonst aus dem Wiki (manche Erfolge haben in der API kein Anforderungsfeld).
   function requirementOf(a) {
     return stripTags(a.requirement).replace(/\s+/g, ' ').trim() || S.wikiReq.get(a.id) || '';
@@ -680,10 +694,18 @@
         <div class="sub" style="margin-left:0">${esc(stripTags(pa.requirement).replace(/\s+/g, ' '))}</div></div>`));
     }
     if (inf.needsUnlock) {
-      const uh = S.wikiUnlock.get(a.id);
-      const text = stripTags(a.locked_text) || uh?.text || 'see the wiki guide below';
-      const links = (uh?.achs || []).filter((x) => x.id !== a.id).map((x) => `<div><a href="#/a/${x.id}">${esc(x.name)}</a> ${stateBadge(x)}</div>`).join('');
-      todo.push(item(`<span class="check">🔒</span><div class="grow"><strong>Unlock first:</strong> ${esc(text)}${links}</div>`));
+      const uh = S.wikiUnlock.get(a.id) || {};
+      const cat = S.catOf.get(a.id);
+      const grp = cat && S.groupOf.get(cat.id);
+      const story = /story journal|storyjournal|journal/i.test(grp?.name || '');
+      const lines = [];
+      if (stripTags(a.locked_text) || uh.text) lines.push(esc(stripTags(a.locked_text) || uh.text));
+      else if (story) lines.push(`Play the “${esc(cat.name)}” story first (Story Journal).`);
+      (uh.achs || []).filter((x) => x.id !== a.id)
+        .forEach((x) => lines.push(`<a href="#/a/${x.id}">${esc(x.name)}</a> ${stateBadge(x)}`));
+      (uh.partOf || []).forEach((t) => lines.push(`Part of <a href="${wikiRoute(S.wikiLang, t)}">${esc(t)}</a> – the full chain and walkthrough are there ›`));
+      if (!lines.length) lines.push('Not stated on the wiki page – see the wiki guide below.');
+      todo.push(item(`<span class="check">🔒</span><div class="grow"><strong>Unlock first:</strong> ${lines.map((l) => `<div>${l}</div>`).join('')}</div>`));
     }
 
     const bits = a.bits || [];
