@@ -678,7 +678,7 @@
           ${!hint && n.type !== 'Text' ? `<button class="small acq" data-bit="${i}">How do I get this? (wiki)</button><div class="acq-out wiki"></div>` : ''}
           ${!hint && !imgs && n.type === 'Text' && !linked && content ? (findWikiLink(content, wikiLabel)
             ? `<a class="sub" style="margin-left:0" href="${wikiRoute(S.wikiLang, findWikiLink(content, wikiLabel))}">Wiki page: where is it? ›</a>`
-            : '<div class="sub" style="margin-left:0">No specific hint found – see the wiki guide below.</div>') : ''}
+            : '<div class="sub" style="margin-left:0">Not matched to a wiki entry automatically – check the full wiki guide below.</div>') : ''}
         </div>`, !S.account && manual.has(i) ? 'done' : ''));
       });
     } else if (isMeta(a)) {
