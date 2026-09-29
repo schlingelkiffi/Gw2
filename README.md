@@ -16,7 +16,7 @@ Ein Web-Tool für Guild-Wars-2-Erfolge, das komplett im Browser läuft. Oberflä
 - **Fortschritt:** Die Startseite zeigt deinen AP-Verlauf (täglich lokal gespeichert): heute, letzte 7 Tage, Schnitt pro Tag und eine Verlaufskurve.
 - **Items im Account:** Mit den Key-Rechten `inventories` + `characters` zeigt das Tool bei Sammlungen, welche Items schon in Bank, Materiallager oder Taschen liegen.
 - **Handelsposten-Kosten:** Preis der fehlenden handelbaren Items (Sofortkauf), bei „x von y“ die günstigsten nötigen.
-- **Event-Timer:** Bei Weltboss-Erfolgen der nächste Start in deiner Ortszeit (fester Tagesplan, Link zu den Wiki-Event-Timern).
+- **Timers:** Eigener Reiter mit allen Weltbossen, nach nächstem Start sortiert, Countdown in deiner Ortszeit und deinen offenen Erfolgen je Boss; bei Weltboss-Erfolgen steht der nächste Start auch direkt auf der Erfolgsseite (fester Tagesplan, Link zu den Wiki-Event-Timern).
 - **Belohnungs-Filter:** In *Easy AP* nach Meisterschaftspunkt, Titel, Item oder Gold filtern.
 - **Timegates:** Tageslimits aus dem Wiki, Fortschritt heute und Countdown bis zum Tagesreset (00:00 UTC).
 

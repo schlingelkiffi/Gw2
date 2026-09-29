@@ -1167,6 +1167,46 @@
     }));
   }
 
+  // ---------- Event-Timer ----------
+  function showTimers() {
+    setNav('timers');
+    const token = ++S.viewToken;
+    view.innerHTML = `<h1>⏰ World boss timers</h1>
+      <p class="muted">Next spawns in your local time. Fixed daily schedule –
+        <a href="${wikiRoute(S.wikiLang, 'Event timers')}">compare with the wiki event timers</a>.</p>
+      <div id="timer-list"></div>`;
+    // Offene Erfolge je Boss (einmal berechnen)
+    const open = new Map();
+    if (S.account) {
+      for (const a of S.ach.values()) {
+        const cat = S.catOf.get(a.id);
+        if (!cat) continue;
+        const inf = Progress.info(a, S.progress.get(a.id));
+        if (inf.finished || inf.periodic || inf.remainingAP <= 0) continue;
+        const t = Timers.forAchievement(a, cat);
+        if (t) (open.get(t.ev.name) || open.set(t.ev.name, []).get(t.ev.name)).push(a);
+      }
+    }
+    const render = () => {
+      if (token !== S.viewToken) return;
+      const now = new Date();
+      const list = Timers.events.map((ev) => Timers.next(ev, now))
+        .sort((x, y) => (y.running - x.running) || (x.start - y.start));
+      $('#timer-list').innerHTML = `<ol class="steps">${list.map((t) => {
+        const achs = open.get(t.ev.name) || [];
+        return `<li class="${t.running ? 'running' : ''}"><span class="check">${t.running ? '🔥' : '⏰'}</span><div class="grow">
+          <strong>${esc(t.ev.name)}</strong> <span class="sub">${esc(t.ev.map)}</span>
+          <div>${esc(t.label.replace(`${t.ev.name} – `, '').replace(`${t.ev.name} `, ''))}</div>
+          ${achs.length ? `<details><summary>${achs.length} open achievement${achs.length === 1 ? '' : 's'}</summary>
+            ${achs.map((a) => `<div><a href="#/a/${a.id}">${esc(a.name)}</a> ${stateBadge(a)}</div>`).join('')}</details>` : ''}
+        </div></li>`;
+      }).join('')}</ol>`;
+    };
+    render();
+    // Countdown aktuell halten, solange die Seite offen ist
+    const timer = setInterval(() => (token === S.viewToken ? render() : clearInterval(timer)), 30000);
+  }
+
   // ---------- Leichte AP ----------
   function computeEasyRows() {
     const rows = [];
@@ -1412,6 +1452,7 @@
     if (wm) showWikiPage(wm[1], decodeURIComponent(wm[2]));
     else if (h.startsWith('/a/')) showAchievement(+h.slice(3));
     else if (h === '/easy') showEasy();
+    else if (h === '/timers') showTimers();
     else if (h === '/settings') showSettings();
     else showSearch();
   }
