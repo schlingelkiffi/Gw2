@@ -20,6 +20,7 @@
     }),
     wikiCache: new Map(),
     wikiReq: new Map(), // achId -> Anforderungstext aus dem Wiki (wenn die API keine liefert)
+    wikiUnlock: new Map(), // achId -> { html } Freischalt-Hinweis aus dem Wiki
   };
 
   const $ = (sel, root = document) => root.querySelector(sel);
@@ -317,6 +318,10 @@
         section = extractSection(content, wikiName, others);
         if (section) content = section;
       }
+      if (inf.needsUnlock || !p) {
+        const uh = wikiUnlockHint(content);
+        if (uh) S.wikiUnlock.set(a.id, uh);
+      }
       if (!requirement) {
         const wr = section ? sectionRequirement(section, wikiName) : wikiRequirement(content);
         if (wr) {
@@ -588,6 +593,19 @@
     return '';
   }
 
+  // Freischaltung aus dem Wiki: erster kurzer Satz/Absatz mit „unlock“; darin genannte Erfolge werden verlinkt.
+  function wikiUnlockHint(content) {
+    for (const el of content.querySelectorAll('p, li, dd, td')) {
+      if (el.querySelector('p, li, table')) continue;
+      const text = el.textContent.replace(/\s+/g, ' ').trim();
+      if (text.length > 400 || !/\bunlock(s|ed)?\b|freigeschaltet|déverrouill/i.test(text)) continue;
+      if (/mount unlock|skin unlock|unlocks? the (title|skin)/i.test(text) && !/after|complet|abschlie/i.test(text)) continue;
+      const achs = [...el.querySelectorAll('a[data-wiki]')].map((l) => S.byName?.get(norm(l.dataset.wiki))).filter(Boolean);
+      return { text, achs };
+    }
+    return null;
+  }
+
   // Anforderung: API-Text, sonst aus dem Wiki (manche Erfolge haben in der API kein Anforderungsfeld).
   function requirementOf(a) {
     return stripTags(a.requirement).replace(/\s+/g, ' ').trim() || S.wikiReq.get(a.id) || '';
@@ -639,7 +657,12 @@
         <a href="#/a/${pa.id}">${esc(pa.name)}</a>
         <div class="sub" style="margin-left:0">${esc(stripTags(pa.requirement).replace(/\s+/g, ' '))}</div></div>`));
     }
-    if (inf.needsUnlock) todo.push(item(`<span class="check">🔒</span><div class="grow"><strong>Unlock first:</strong> ${esc(stripTags(a.locked_text) || 'see wiki guide')}</div>`));
+    if (inf.needsUnlock) {
+      const uh = S.wikiUnlock.get(a.id);
+      const text = stripTags(a.locked_text) || uh?.text || 'see the wiki guide below';
+      const links = (uh?.achs || []).filter((x) => x.id !== a.id).map((x) => `<div><a href="#/a/${x.id}">${esc(x.name)}</a> ${stateBadge(x)}</div>`).join('');
+      todo.push(item(`<span class="check">🔒</span><div class="grow"><strong>Unlock first:</strong> ${esc(text)}${links}</div>`));
+    }
 
     const bits = a.bits || [];
     const manual = new Set(Store.get(manualKey(a.id), []));
