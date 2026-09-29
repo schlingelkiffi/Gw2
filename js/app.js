@@ -370,8 +370,22 @@
 
   // Sucht im Wiki-Inhalt das kleinste Element (Tabellenzeile, Listeneintrag, …), das den Text enthält.
   function findWikiHint(content, label) {
-    const needle = norm(label).replace(/[.!:]+$/, '');
-    if (!content || needle.length < 3) return null;
+    const full = norm(label).replace(/[.!:]+$/, '');
+    if (!content || full.length < 3) return null;
+    // Erst der ganze Text, dann ohne führende Wörter (mind. 2 Wörter, mind. 8 Zeichen)
+    const words = full.split(' ');
+    const STOP = /^(of|the|a|an|in|on|at|to|and|or|for|with|from|by|der|die|das|des|den|dem|im|am|und)$/;
+    for (let i = 0; i < words.length - 1; i++) {
+      if (i > 0 && STOP.test(words[i])) continue; // gekürzte Variante nie mit Füllwort beginnen
+      const needle = words.slice(i).join(' ');
+      if (i > 0 && needle.length < 8) break;
+      const hit = findWikiHintExact(content, needle, full);
+      if (hit) return hit;
+    }
+    return null;
+  }
+
+  function findWikiHintExact(content, needle, full) {
     let best = null;
     let bestLen = Infinity;
     for (const el of content.querySelectorAll('tr, li, dd, p, td')) {
@@ -379,11 +393,10 @@
       if (len < bestLen && norm(el.textContent).includes(needle)) { best = el; bestLen = len; }
     }
     if (!best) return null;
-    // Ganze Tabellenzeile zeigen (enthält meist Fundort/Notizen) – aber nur, wenn sie nicht riesig ist
     // Nur wenn der Treffer selbst eine Zelle ist (eine Zeile pro Schritt), die ganze Zeile nehmen
     if (best.matches('td, th')) best = best.closest('tr');
     const len = norm(best.textContent).length;
-    if (len > 1500 || len < needle.length + 6) return null; // zu groß oder nur der Name selbst -> kein Mehrwert
+    if (len > 1500 || len < Math.max(needle.length, full.length) + 6) return null; // zu groß oder nur der Name selbst -> kein Mehrwert
     if (best.tagName === 'TR') {
       const table = best.closest('table');
       const head = table?.querySelector('tr');
@@ -428,10 +441,23 @@
     const promise = (async () => {
       const res = await Wiki.page(S.wikiLang, title);
       const page = Wiki.sanitize(S.wikiLang, res.html);
-      // Infobox zuerst (dort steht beim NPC der Standort), dann der restliche Text
-      const links = [...page.querySelectorAll('.infobox a[data-wiki], table a[data-wiki]'), ...page.querySelectorAll('a[data-wiki]')]
-        .map((l) => l.dataset.wiki);
-      for (const t of links.slice(0, 80)) {
+      // Nur ausdrückliche Standort-Angaben: Infobox-Feld „Location/Area/Zone …“ oder Abschnitt „Location(s)“.
+      // Allgemeine Seiten (z. B. „Achievement“) haben so etwas nicht -> kein Ort.
+      const LOC = /^(locations?|area|zone|map|region|sector|found in|standort|gebiet|ort)\s*:?$/i;
+      const links = [];
+      for (const label of page.querySelectorAll('th, dt, b, strong')) {
+        if (!LOC.test(label.textContent.trim())) continue;
+        const val = label.matches('th') ? label.nextElementSibling : label.matches('dt') ? label.nextElementSibling : label.parentElement;
+        val?.querySelectorAll('a[data-wiki]').forEach((l) => links.push(l.dataset.wiki));
+      }
+      for (const h of page.querySelectorAll('h2, h3')) {
+        if (!/^(locations?|standorte?|fundorte?)$/i.test(h.textContent.trim())) continue;
+        const wrap = h.parentElement?.classList.contains('mw-heading') ? h.parentElement : h;
+        for (let n = wrap.nextElementSibling; n && !n.matches('h2, h3, .mw-heading'); n = n.nextElementSibling) {
+          n.querySelectorAll('a[data-wiki]').forEach((l) => links.push(l.dataset.wiki));
+        }
+      }
+      for (const t of links.slice(0, 40)) {
         const place = Geo.locate(t);
         if (place) return { place, via: t };
       }
