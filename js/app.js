@@ -1167,70 +1167,6 @@
     }));
   }
 
-  // ---------- Karte: „What can I do here?“ ----------
-  async function showMap(mapName) {
-    setNav('map');
-    const token = ++S.viewToken;
-    view.innerHTML = `<h1>🗺️ What can I do here?</h1>
-      <p class="muted">Pick a map – you get your open achievement steps located there, world bosses with timers and achievements that name the map.</p>
-      <div class="searchbox"><input id="map-q" list="map-list" placeholder="Map name, e.g. Bloodtide Coast" autocomplete="off" value="${esc(mapName || Store.get('lastMap', ''))}">
-        <datalist id="map-list"></datalist></div>
-      <div id="map-out"><p class="muted">Loading map data…</p></div>`;
-    try { await Geo.load(S.wikiLang); } catch (e) { $('#map-out').innerHTML = `<p class="err">Could not load map data: ${esc(e.message)}</p>`; return; }
-    if (token !== S.viewToken) return;
-    const maps = Geo.mapsList();
-    $('#map-list').innerHTML = maps.map((m) => `<option value="${esc(m.name)}">${esc(m.region || '')}</option>`).join('');
-    const go = () => {
-      const m = maps.find((x) => norm(x.name) === norm($('#map-q').value));
-      if (m) location.hash = `#/map/${encodeURIComponent(m.name)}`;
-    };
-    $('#map-q').onchange = go;
-    $('#map-q').onkeydown = (e) => { if (e.key === 'Enter') go(); };
-    const out = $('#map-out');
-    if (!mapName) {
-      const last = Store.get('lastMap', '');
-      out.innerHTML = last ? `<p><a href="#/map/${encodeURIComponent(last)}">Last map: ${esc(last)} ›</a></p>` : '<p class="muted">Start typing a map name.</p>';
-      return;
-    }
-    Store.set('lastMap', mapName);
-    if (!S.account) { out.innerHTML = '<p class="muted">Add an API key first so the tool knows what you still need.</p>'; return; }
-
-    const target = norm(mapName);
-    const groups = [];
-    for (const a of S.ach.values()) {
-      const cat = S.catOf.get(a.id);
-      if (!cat) continue;
-      const inf = Progress.info(a, S.progress.get(a.id));
-      if (inf.finished || inf.periodic || inf.remainingAP <= 0) continue;
-      const grp = S.groupOf.get(cat.id);
-      if (/^(historisch|historic)/i.test(grp?.name || '') || /monument/i.test(cat.name)) continue;
-      const steps = [];
-      (a.bits || []).forEach((b, i) => {
-        if (b.type !== 'Text' || !b.text || inf.bitsDone.has(i)) return;
-        const loc = Geo.locate(b.text);
-        if (loc && norm(Geo.mapName(loc.map)) === target) steps.push({ label: b.text, loc });
-      });
-      const timer = Timers.forAchievement(a, cat);
-      const bossHere = timer && norm(timer.ev.map) === target;
-      const named = norm(`${a.name} ${stripTags(a.requirement)}`).includes(target);
-      if (steps.length || bossHere || named) groups.push({ a, inf, steps, timer: bossHere ? timer : null });
-    }
-    groups.sort((x, y) => y.steps.length - x.steps.length || !!y.timer - !!x.timer || y.inf.remainingAP - x.inf.remainingAP);
-    const bosses = Timers.events.filter((e) => norm(e.map) === target).map((e) => Timers.next(e));
-    out.innerHTML = `
-      ${bosses.length ? `<h2>⏰ World bosses here</h2><ul class="list">${bosses.map((t) => `<li class="row">⏰ ${esc(t.label)}</li>`).join('')}</ul>` : ''}
-      <h2>${groups.length} open achievement${groups.length === 1 ? '' : 's'} on ${esc(mapName)}</h2>
-      ${groups.length ? `<ol class="steps">${groups.map(({ a, inf, steps, timer }) => `
-        <li><span class="check">○</span><div class="grow">
-          <a href="#/a/${a.id}"><strong>${esc(a.name)}</strong></a> ${stateBadge(a)}
-          <div class="sub" style="margin-left:0">${esc(nextStepText(a, inf))}</div>
-          ${timer ? `<div class="sub" style="margin-left:0">⏰ ${esc(timer.label)}</div>` : ''}
-          ${steps.length ? `<details ${steps.length <= 3 ? 'open' : ''}><summary>${steps.length} step${steps.length === 1 ? '' : 's'} on this map</summary>
-            ${steps.map((st) => `<div class="map-step"><strong>${esc(st.label)}</strong>${waypointLine(st.loc)}</div>`).join('')}</details>` : ''}
-        </div></li>`).join('')}</ol>` : '<p class="muted">Nothing open found on this map (the tool matches step names with map locations, so some achievements can be missing).</p>'}`;
-    tagChatKinds(out);
-  }
-
   // ---------- Leichte AP ----------
   function computeEasyRows() {
     const rows = [];
@@ -1476,7 +1412,6 @@
     if (wm) showWikiPage(wm[1], decodeURIComponent(wm[2]));
     else if (h.startsWith('/a/')) showAchievement(+h.slice(3));
     else if (h === '/easy') showEasy();
-    else if (h === '/map' || h.startsWith('/map/')) showMap(h.length > 5 ? decodeURIComponent(h.slice(5)) : '');
     else if (h === '/settings') showSettings();
     else showSearch();
   }

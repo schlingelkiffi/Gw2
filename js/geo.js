@@ -92,11 +92,8 @@ const Geo = (() => {
       return { 2: 'item', 4: 'map', 11: 'item', 10: 'item', 7: 'skill', 6: 'item' }[type] || 'other';
     } catch { return 'other'; }
   }
-  // Alle Karten mit Namen (gleiche Namen zusammengefasst), sortiert
-  const mapsList = () => (world ? [...new Map(Object.values(world.maps).filter((m) => m.name).map((m) => [m.name, m])).values()]
-    .sort((a, b) => a.name.localeCompare(b.name)) : []);
   // Ganze Karten (z. B. „Amnytas“) sind als Ziel zu grob
   const isMap = (name) => !!world && Object.values(world.maps).some((m) => norm(m.name) === norm(name));
 
-  return { load, locate, nearest, nearestWaypoint, mapName, mapsList, isMap, kindOfChat, get ready() { return !!world; } };
+  return { load, locate, nearest, nearestWaypoint, mapName, isMap, kindOfChat, get ready() { return !!world; } };
 })();

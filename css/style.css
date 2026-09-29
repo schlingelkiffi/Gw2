@@ -179,8 +179,6 @@ table.easy td.prog { min-width: 120px; }
 button.watch { margin: .1rem 0 .5rem; }
 .card input[type=number] { width: 8rem; font: inherit; color: var(--text); background: var(--panel-2); border: 1px solid var(--line); border-radius: 6px; padding: .3rem .5rem; }
 
-.map-step { margin: .4rem 0 .2rem; padding-left: .2rem; }
-
 /* Besitz & Preise */
 .own { color: var(--ok); font-size: .9rem; margin-top: .3rem; }
 .price { font-size: .9rem; margin-top: .2rem; }
