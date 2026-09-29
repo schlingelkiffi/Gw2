@@ -649,7 +649,9 @@
       const meta = isMeta(a);
       const grp = S.groupOf.get(cat.id);
       const historic = /^(historisch|historic|historique|histórico)/i.test(grp?.name || '');
-      rows.push({ a, inf, cat, grp, locked, meta, historic, ease: inf.ease * (meta ? 0.1 : 1) });
+      // Guild Wars 1: Halle der Monumente (Punkte kommen aus dem GW1-Account)
+      const gw1 = /monument|guild wars 1|gw1/i.test(`${cat.name} ${grp?.name || ''}`);
+      rows.push({ a, inf, cat, grp, locked, meta, historic, gw1, ease: inf.ease * (meta ? 0.1 : 1) });
     }
     return rows;
   }
@@ -682,6 +684,7 @@
         <label><input type="checkbox" id="f-pvp" ${f.hidePvp ? 'checked' : ''}> PvP ausblenden</label>
         <label><input type="checkbox" id="f-rep" ${f.hideRepeatable ? 'checked' : ''}> Wiederholbare ausblenden</label>
         <label title="Erfolge vergangener/saisonaler Events – nur während des jeweiligen Festivals machbar"><input type="checkbox" id="f-hist" ${f.hideHistoric !== false ? 'checked' : ''}> Historische ausblenden</label>
+        <label title="Halle der Monumente – nur mit Guild-Wars-1-Account machbar"><input type="checkbox" id="f-gw1" ${f.hideGw1 !== false ? 'checked' : ''}> GW1-Erfolge ausblenden</label>
         <label title="Meta-Erfolge brauchen mehrere andere Erfolge"><input type="checkbox" id="f-meta" ${f.hideMeta ? 'checked' : ''}> Meta-Erfolge ausblenden</label>
       </div>
       <details class="groups"><summary>Gruppen filtern (${S.groups.length - f.excludedGroups.length}/${S.groups.length} aktiv)</summary>
@@ -699,6 +702,7 @@
     $('#f-rep').onchange = (e) => { f.hideRepeatable = e.target.checked; update(); };
     $('#f-hist').onchange = (e) => { f.hideHistoric = e.target.checked; update(); };
     $('#f-meta').onchange = (e) => { f.hideMeta = e.target.checked; update(); };
+    $('#f-gw1').onchange = (e) => { f.hideGw1 = e.target.checked; update(); };
     view.querySelectorAll('.f-group').forEach((cb) => cb.onchange = () => {
       f.excludedGroups = [...view.querySelectorAll('.f-group')].filter((c) => !c.checked).map((c) => c.value);
       $('.groups summary').textContent = `Gruppen filtern (${S.groups.length - f.excludedGroups.length}/${S.groups.length} aktiv)`;
@@ -716,6 +720,7 @@
       !(f.hideRepeatable && r.inf.repeatable) &&
       !(f.hideHistoric !== false && r.historic) &&
       !(f.hideMeta && r.meta) &&
+      !(f.hideGw1 !== false && r.gw1) &&
       !(f.onlyStarted && r.inf.current === 0) &&
       r.inf.frac * 100 >= f.minProgress &&
       !(r.grp && excluded.has(r.grp.id)));
