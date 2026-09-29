@@ -153,8 +153,15 @@ table.easy td.prog { min-width: 120px; }
 .key-row { display: flex; gap: .5rem; flex-wrap: wrap; }
 .key-row input { flex: 1; min-width: 220px; }
 
+/* Bilder am Schritt */
+.step-imgs { display: flex; flex-wrap: wrap; gap: .5rem; margin-top: .4rem; }
+.step-img { margin: 0; background: var(--panel-2); padding: .3rem; border-radius: 6px; max-width: 100%; }
+.step-img img { display: block; max-width: min(320px, 100%); height: auto; }
+.step-img figcaption { font-size: .8rem; color: var(--muted); margin-top: .2rem; max-width: 320px; }
+.hint img { max-width: min(320px, 100%); height: auto; }
+
 /* Wegmarken */
-.wp { margin-top: .3rem; font-size: .92rem; }
+.wp { margin-top: .3rem; font-size: .92rem; line-height: 1.8; }
 .wp .chatlink { margin-left: .2rem; }
 
 /* Chat-Codes (Wegmarken usw.) */

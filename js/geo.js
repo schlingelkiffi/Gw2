@@ -1,7 +1,8 @@
 // Orte & Wegmarken: Kartendaten der GW2-API (/v2/continents/1/floors/1), um zu einem Ort
 // (Gebiet, Sehenswürdigkeit) die nächstgelegene Wegmarke samt Chat-Code zu finden.
 const Geo = (() => {
-  const MAX_AGE = 30 * 24 * 3600 * 1000; // Karten ändern sich selten
+  const MAX_AGE = 30 * 24 * 3600 * 1000;
+  const CACHE_VERSION = 2; // erhöhen, wenn sich das reduzierte Format ändert // Karten ändern sich selten
   const norm = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '')
     .replace(/[’']/g, "'").replace(/\s+/g, ' ').trim();
   const vals = (o) => (Array.isArray(o) ? o : Object.values(o || {}));
@@ -18,7 +19,7 @@ const Geo = (() => {
       for (const m of vals(region.maps)) {
         maps[m.id] = { id: m.id, name: m.name, region: region.name };
         for (const s of vals(m.sectors)) {
-          if (s.name) places.push({ kind: 'area', name: s.name, map: m.id, coord: s.coord });
+          if (s.name) places.push({ kind: 'area', name: s.name, map: m.id, coord: s.coord, chat: s.chat_link });
         }
         for (const p of vals(m.points_of_interest)) {
           if (!p.name) continue;
@@ -36,12 +37,12 @@ const Geo = (() => {
     loading = (async () => {
       const key = `world-${lang}`;
       const cached = await DB.get(key);
-      if (cached && Date.now() - cached.ts < MAX_AGE) {
+      if (cached && cached.v === CACHE_VERSION && Date.now() - cached.ts < MAX_AGE) {
         world = cached.data;
       } else {
         const floor = await GW2.get('/continents/1/floors/1', { lang });
         world = reduce(floor);
-        DB.set(key, { ts: Date.now(), data: world });
+        DB.set(key, { v: CACHE_VERSION, ts: Date.now(), data: world });
       }
       // Namensindex: Wegmarken selbst, Sehenswürdigkeiten und Gebiete
       world.byName = new Map();

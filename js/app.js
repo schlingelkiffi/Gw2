@@ -404,8 +404,9 @@
     if (!place) return '';
     const wp = Geo.nearestWaypoint(place);
     if (!wp) return '';
-    const where = place.kind === 'waypoint' ? '' : `${esc(place.name)}, ${esc(Geo.mapName(place.map))} – `;
-    return `<div class="wp">📍 ${where}nearest waypoint: <strong>${esc(wp.name)}</strong> ${chatBtn(wp.chat)}</div>`;
+    if (place.kind === 'waypoint') return `<div class="wp">📍 Waypoint: <strong>${esc(wp.name)}</strong> ${chatBtn(wp.chat)}</div>`;
+    return `<div class="wp">📍 ${esc(place.name)}, ${esc(Geo.mapName(place.map))} ${chatBtn(place.chat)}
+      <br>🔹 Nearest waypoint: <strong>${esc(wp.name)}</strong> ${chatBtn(wp.chat)}</div>`;
   }
 
   // NPCs/Orte aus dem Wiki-Abschnitt -> Standort (über die Wiki-Seite des NPCs) -> nächste Wegmarke
@@ -454,6 +455,26 @@
     }).filter(Boolean);
     el.innerHTML = rows.length ? `<h2>📍 Where to go</h2><ol class="steps">${rows.join('')}</ol>
       <p class="muted">Tap a chat code to copy it, paste it into the in-game chat and click it to see the spot on your map.</p>` : '';
+  }
+
+  // Bilder zu einem Schritt: Galerie-/Vorschaubilder, deren Beschriftung oder Dateiname den Schritt nennt
+  function findWikiImages(content, label) {
+    const needle = norm(label);
+    if (!content || needle.length < 4) return '';
+    const seen = new Set();
+    const out = [];
+    for (const img of content.querySelectorAll('img')) {
+      if ((+img.getAttribute('width') || 100) < 60) continue; // Symbole überspringen
+      const box = img.closest('.gallerybox') || img.closest('.thumb, figure') || img.closest('li, td');
+      const caption = box?.querySelector('.gallerytext, .thumbcaption, figcaption')?.textContent || '';
+      const file = decodeURIComponent((img.getAttribute('src') || '').split('/').pop()).replace(/_/g, ' ').replace(/^\d+px-/, '');
+      const hay = norm(`${caption} ${img.getAttribute('alt') || ''} ${file}`);
+      if (!hay.includes(needle) || seen.has(img.src)) continue;
+      seen.add(img.src);
+      out.push(`<figure class="step-img">${img.outerHTML}${caption.trim() ? `<figcaption>${esc(caption.trim())}</figcaption>` : ''}</figure>`);
+      if (out.length >= 3) break;
+    }
+    return out.length ? `<div class="wiki step-imgs">${out.join('')}</div>` : '';
   }
 
   // Link im Wiki-Text, dessen Text genau dem Schritt entspricht (z. B. Ortsname -> eigene Wiki-Seite).
@@ -602,12 +623,14 @@
         if (apiDone) { done.push(item(`<span class="check">✔</span><div class="grow">${head}</div>`, 'done')); return; }
         const hint = content ? findWikiHint(content, wikiLabel) : null;
         const wpLine = n.type === 'Text' ? waypointLine(Geo.locate(wikiLabel)) : '';
+        const imgs = content && !(hint && hint.includes('<img')) ? findWikiImages(content, wikiLabel) : '';
         const mark = S.account ? '○' : `<input type="checkbox" class="manual" data-bit="${i}" ${manual.has(i) ? 'checked' : ''} title="Tick off manually (no API key)">`;
         todo.push(item(`<span class="check">${mark}</span><div class="grow">${head}
           ${wpLine}
           ${hint ? `<div class="hint wiki">${hint}</div>` : ''}
+          ${imgs}
           ${!hint && n.type !== 'Text' ? `<button class="small acq" data-bit="${i}">How do I get this? (wiki)</button><div class="acq-out wiki"></div>` : ''}
-          ${!hint && n.type === 'Text' && !linked && content ? (findWikiLink(content, wikiLabel)
+          ${!hint && !imgs && n.type === 'Text' && !linked && content ? (findWikiLink(content, wikiLabel)
             ? `<a class="sub" style="margin-left:0" href="${wikiRoute(S.wikiLang, findWikiLink(content, wikiLabel))}">Wiki page: where is it? ›</a>`
             : '<div class="sub" style="margin-left:0">No specific hint found – see the wiki guide below.</div>') : ''}
         </div>`, !S.account && manual.has(i) ? 'done' : ''));
