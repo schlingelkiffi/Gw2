@@ -330,3 +330,9 @@ li.tstep > details > summary .sub { margin-left: .2rem; }
 li.tstep > details > summary .chatlink { margin-left: .3rem; }
 li.tstep > details[open] { background: var(--panel); border-radius: 6px; padding: .2rem .5rem .4rem; margin: .2rem 0; }
 .step-det .step-imgs { margin-top: .4rem; }
+
+/* Spur zum nächsten Schritt (alles eingeklappt) */
+li.on-path > details > summary { border-left: 3px solid var(--accent); }
+.tgroup.on-path > details > summary, .tpick.on-path > details > summary { border-left: none; }
+.tgroup.on-path > details > summary strong, .tpick.on-path > details > summary strong { color: var(--accent-2); }
+#col-cost { white-space: normal; }

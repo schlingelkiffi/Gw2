@@ -872,15 +872,12 @@
     const cands = outside.length ? outside : open;
     cands.sort((x, y) => depth(y) - depth(x) || y.classList.contains('s-progress') - x.classList.contains('s-progress'));
     const next = cands[0];
-    // Aufklappen ohne Infokasten (data-auto): die Zwischenstufen zeigen nur ihre Äste
-    const autoOpen = (d) => { if (!d.open) { if (d.parentElement.classList.contains('tnode')) d.parentElement.dataset.auto = '1'; d.open = true; } };
-    tree.querySelectorAll('.tree.root > li:not(.s-done) > details').forEach(autoOpen);
+    // Alles bleibt eingeklappt – der nächste Schritt ist nur markiert; „Next up“ oben öffnet den Weg dorthin
     if (next) {
       next.classList.add('current');
       next.querySelector('.title').insertAdjacentHTML('beforeend', ' <span class="pill warn">next up</span>');
-      for (let p = next.parentElement; p && p !== tree; p = p.parentElement) if (p.tagName === 'DETAILS') autoOpen(p);
-      next.querySelector('details').open = true;
-      delete next.dataset.auto;
+      // Äste auf dem Weg dorthin dezent markieren, damit man beim Aufklappen die Spur sieht
+      for (let p = next.parentElement; p && p !== tree; p = p.parentElement) if (p.tagName === 'LI') p.classList.add('on-path');
     }
 
     // Stand: im Rezeptbaum zählen nur die Erfolge, die noch gebraucht werden
@@ -945,7 +942,6 @@
         if (e.target.open) fillNode(li);
       }, true);
     }
-    if (next) fillNode(next);
     prefetchUnlocks(tree);
   }
 
@@ -1072,7 +1068,11 @@
   function gotoNode(id) {
     const li = document.getElementById(`node-${id}`);
     if (!li) { location.hash = `#/a/${id}`; return; }
-    for (let p = li.parentElement; p; p = p.parentElement) if (p.tagName === 'DETAILS') p.open = true;
+    for (let p = li.parentElement; p; p = p.parentElement) {
+      if (p.tagName !== 'DETAILS' || p.open) continue;
+      if (p.parentElement?.classList.contains('tnode')) p.parentElement.dataset.auto = '1'; // nur Äste, kein Infokasten
+      p.open = true;
+    }
     delete li.dataset.auto;
     li.querySelector('details').open = true;
     fillNode(li);
