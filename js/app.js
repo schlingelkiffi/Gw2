@@ -62,6 +62,13 @@
     for (const g of S.groups) for (const cid of g.categories || []) if (cats.has(cid)) S.groupOf.set(cid, g);
     Collections.reset();
     ancestorMemo.clear();
+    relMemo.clear();
+    // Belohnungs-Items einmaliger Erfolge: Item-ID -> Erfolge (für Teil-Erfolge über Item-Schritte)
+    S.rewardOf = new Map();
+    for (const a of data.achievements) {
+      if ((a.flags || []).some((f) => ['Daily', 'Weekly', 'Monthly', 'Repeatable'].includes(f))) continue;
+      for (const r of a.rewards || []) if (r.type === 'Item') (S.rewardOf.get(r.id) || S.rewardOf.set(r.id, []).get(r.id)).push(a.id);
+    }
     S.byName = new Map();
     for (const a of data.achievements) {
       const k = norm(a.name);
@@ -82,6 +89,8 @@
     S.easyRows = null;
     S.unlocks = null;
     S.unlockPromise = null;
+    S.wallet = null;
+    S.walletPromise = null;
     if (!S.key) { renderAccount(); return; }
     status('Loading account progress…');
     try {
@@ -93,6 +102,10 @@
       recordDaily();
       S.invPromise = loadInventory().catch((e) => console.warn('Inventar', e));
       S.unlockPromise = Collections.accountUnlocks(S.key, S.perms).then((u) => (S.unlocks = u)).catch(() => null);
+      if (S.perms.includes('wallet')) {
+        S.walletPromise = GW2.get('/account/wallet', { access_token: S.key })
+          .then((w) => { S.wallet = new Map(w.map((x) => [x.id, x.value])); }).catch(() => null);
+      }
     } catch (e) {
       toast(`API key error: ${e.message}`);
     }
@@ -538,36 +551,72 @@
   const ST_ICON = { done: '✔', progress: '◐', open: '○', locked: '🔒', unknown: '○' };
 
   // ---------- Baum: Ziel oben, darunter das, was man dafür braucht ----------
-  // Einheiten: Kategorie (📁), Bauteil (🎁) oder bei Reittieren ein einzelner Schritt. Jeder Erfolg erscheint
-  // einmal vollständig in seiner Einheit; braucht ihn ein Erfolg aus einer anderen Einheit, steht dort ein Verweis.
-  function buildUnits(groups, sequential) {
-    const units = [];
-    for (const g of groups) {
-      if (g.kind === 'prereq') continue; // Vor-Erfolge anderer Kategorien hängen direkt an ihren Erfolgen
-      if (sequential && g.kind === 'achievements') g.ids.forEach((id) => units.push({ kind: 'single', ids: [id], title: S.ach.get(id)?.name || '' }));
-      else units.push({ ...g });
+  // Beziehungen zwischen Erfolgen (alle aus der API):
+  //   pre    – Voraussetzung (prerequisites)
+  //   sub    – Teil-Erfolg: ein Schritt verlangt das Item, das ein anderer Erfolg als Belohnung gibt,
+  //            oder lautet „Complete the X collection“
+  //   unlock – Sperrtext „Unlocks … after completing the X collection“
+  const relMemo = new Map();
+  function relKids(a) {
+    if (!a) return [];
+    if (relMemo.has(a.id)) return relMemo.get(a.id);
+    const out = [];
+    const add = (id, why) => { if (id && id !== a.id && S.ach.has(id) && !out.some((x) => x.id === id)) out.push({ id, why }); };
+    for (const p of a.prerequisites || []) add(p, 'pre');
+    for (const b of a.bits || []) {
+      const r = b.type === 'Item' ? S.rewardOf?.get(b.id) : null;
+      if (r && r.length <= 2) r.forEach((id) => add(id, 'sub'));
+      const m = /^complete (?:the )?(.+?)(?: collection| achievements?)?[.!]?$/i.exec(String(b.text || '').trim());
+      if (m) add(S.byName?.get(norm(m[1]))?.id, 'sub');
     }
-    if (sequential && units.length > 1) units.forEach((u, i) => { u.step = `Step ${i + 1}`; });
-    return units;
+    const m = /after (?:completing|finishing) (?:the )?(.+?)(?: collection| achievements?| story| chapter)?[.!]?$/i.exec(stripTags(a.locked_text).trim());
+    if (m) add(S.byName?.get(norm(m[1]))?.id, 'unlock');
+    relMemo.set(a.id, out);
+    return out;
   }
 
-  // Erfolge einer Einheit, die kein anderer Erfolg der Einheit voraussetzt (die „Spitzen“)
-  function unitSinks(u) {
+  // Alles, was ein Erfolg (auch indirekt) braucht
+  const ancestorMemo = new Map();
+  function ancestors(id, stack = new Set()) {
+    if (ancestorMemo.has(id)) return ancestorMemo.get(id);
+    const out = new Set();
+    if (stack.has(id)) return out; // Zyklus
+    stack.add(id);
+    for (const k of relKids(S.ach.get(id))) {
+      out.add(k.id);
+      ancestors(k.id, stack).forEach((x) => out.add(x));
+    }
+    stack.delete(id);
+    ancestorMemo.set(id, out);
+    return out;
+  }
+  // Nur direkte Äste: was schon über einen anderen Ast nötig ist, weglassen
+  function directKids(a) {
+    const kids = relKids(a);
+    return kids.filter((k) => !kids.some((q) => q.id !== k.id && ancestors(q.id).has(k.id)));
+  }
+
+  // Einheiten: Kategorie (📁), Wiki-Abschnitt (📖), Bauteil (🎁). Jeder Erfolg erscheint einmal vollständig in
+  // seiner Einheit; braucht ihn ein Erfolg aus einer anderen Einheit, steht dort ein Verweis.
+  const buildUnits = (groups) => groups.filter((g) => g.kind !== 'prereq').map((g) => ({ ...g }));
+
+  // Erfolge einer Einheit, die kein anderer Erfolg der Einheit braucht (die „Spitzen“)
+  function unitSinks(u, reverse) {
     const set = new Set(u.ids);
     const needed = new Set();
-    for (const id of u.ids) for (const p of S.ach.get(id)?.prerequisites || []) if (set.has(p) && p !== id) needed.add(p);
+    for (const id of u.ids) for (const k of relKids(S.ach.get(id))) if (set.has(k.id)) needed.add(k.id);
     const sinks = u.ids.filter((id) => !needed.has(id));
-    return sinks.length ? sinks : u.ids.slice(0, 1);
+    const out = sinks.length ? sinks : u.ids.slice(0, 1);
+    return reverse ? out.reverse() : out; // Reittiere: was im Wiki zuletzt kommt, steht oben
   }
 
   function refNode(a, unit, note = '') {
     const st = nodeState(a);
-    const where = unit ? `↪ ${unit.step ? `${unit.step} · ` : ''}${unit.kind === 'single' ? '' : unit.title}` : '↪ see above';
     return `<li class="tref s-${st}"><span class="st">${ST_ICON[st]}</span><a href="#" data-goto="${a.id}">${esc(a.name)}</a>
-      <span class="sub">${esc(note || where.replace(/ · $/, ''))}</span> ${stateBadge(a)}</li>`;
+      <span class="sub">${esc(note || (unit ? `↪ in ${unit.title}` : '↪ see above'))}</span> ${stateBadge(a)}</li>`;
   }
 
-  function nodeLi(a, kids = '', step = '', note = '') {
+  function nodeLi(a, kids = '', note = '') {
     const state = nodeState(a);
     const inf = Progress.info(a, S.progress.get(a.id));
     let line;
@@ -579,19 +628,20 @@
     else line = nextStepText(a, inf);
     return `<li class="tnode s-${state}" id="node-${a.id}" data-id="${a.id}"><details>
       <summary><span class="st">${ST_ICON[state]}</span>${achIcon(a)}
-        <div class="grow"><div class="title">${step ? `<span class="pill step">${esc(step)}</span> ` : ''}${esc(a.name)}${note ? ` <span class="pill">${esc(note)}</span>` : ''}</div>
+        <div class="grow"><div class="title">${esc(a.name)}${note ? ` <span class="pill">${esc(note)}</span>` : ''}</div>
           <div class="sub">${esc(truncate(line.replace(/\s+/g, ' '), 180))}</div>
           ${state === 'progress' && inf.maxCount > 1 ? bar(inf.frac) : ''}</div>
         ${stateBadge(a)}</summary>
-      <div class="tbody"><p class="muted">Loading…</p></div>
+      <div class="tbody"></div>
       <ul class="tree tkids">${kids}</ul></details></li>`;
   }
 
   // Meta-Erfolg: „noch N von diesen“ – nur wenn die Kategorie nicht ohnehin als Einheit im Baum steht
   function metaPick(a, tc, ui) {
-    if (!isMeta(a) || nodeState(a) === 'done') return '';
+    // Nur echte Metas („Complete 36 map achievements …“), nicht jede Anforderung mit dem Kategorienamen
+    if (!isMeta(a) || !META_RE.test(stripTags(a.requirement)) || nodeState(a) === 'done') return '';
     const cat = S.catOf.get(a.id);
-    const others = categoryIds(cat).filter((id) => id !== a.id && S.ach.has(id));
+    const others = categoryIds(cat).filter((id) => id !== a.id && S.ach.has(id) && !Progress.info(S.ach.get(id), null).periodic);
     if (!others.length || others.some((id) => tc.home.has(id))) return '';
     const inf = Progress.info(a, S.progress.get(a.id));
     const left = Math.max(0, inf.maxCount - inf.current);
@@ -602,41 +652,19 @@
       <ul class="tree">${sorted.map((id) => achNode(id, tc, ui)).join('')}</ul></details></li>`;
   }
 
-  // Alle (auch indirekten) Voraussetzungen eines Erfolgs
-  const ancestorMemo = new Map();
-  function ancestors(id, stack = new Set()) {
-    if (ancestorMemo.has(id)) return ancestorMemo.get(id);
-    const out = new Set();
-    if (stack.has(id)) return out; // Zyklus
-    stack.add(id);
-    for (const p of S.ach.get(id)?.prerequisites || []) {
-      out.add(p);
-      ancestors(p, stack).forEach((x) => out.add(x));
-    }
-    stack.delete(id);
-    ancestorMemo.set(id, out);
-    return out;
-  }
-  // Nur direkte Äste: Voraussetzungen, die schon über eine andere Voraussetzung nötig sind, weglassen
-  function directPrereqs(a) {
-    const pre = (a.prerequisites || []).filter((p) => S.ach.has(p) && p !== a.id);
-    return pre.filter((p) => !pre.some((q) => q !== p && ancestors(q).has(p)));
-  }
-
-  function achNode(id, tc, ui, extra = '', step = '') {
+  function achNode(id, tc, ui, why = '') {
     const a = S.ach.get(id);
     if (!a) return '';
     const h = tc.home.get(id);
     if (tc.shown.has(id) || (h != null && h !== ui)) {
-      // Verweis auf den direkt vorherigen Einzelschritt sparen – der hängt ohnehin darunter
-      if (h === ui - 1 && tc.sequential && tc.units[h].kind === 'single') return '';
-      return refNode(a, h != null && h !== ui ? tc.units[h] : null);
+      return refNode(a, h != null && h !== ui ? tc.units[h] : null, why === 'unlock' ? '↪ unlocks it – see above' : '');
     }
     tc.shown.add(id);
-    const kids = directPrereqs(a).map((pid) => achNode(pid, tc, ui)).join('') + metaPick(a, tc, ui) + extra;
-    return nodeLi(a, kids, step);
+    const kids = directKids(a).map((k) => achNode(k.id, tc, ui, k.why)).join('') + metaPick(a, tc, ui);
+    return nodeLi(a, kids, why === 'unlock' ? 'unlocks it' : '');
   }
 
+  // Bauteil-Gruppe ohne Rezeptbaum (z. B. Belohnung eines Erfolgs)
   function itemLi(u, states, kids) {
     const it = S.colItems?.[u.itemId];
     const own = u.itemId ? S.inv?.get(u.itemId) : null;
@@ -644,41 +672,109 @@
     return `<li class="titem s-${state}"><details><summary><span class="st">${ST_ICON[state]}</span>
         ${it?.icon ? `<img class="icon" src="${esc(it.icon)}" alt="">` : '<span class="icon ph"></span>'}
         <div class="grow"><div class="title${it?.rarity ? ` r-${esc(it.rarity)}` : ''}">${esc(it?.name || u.title)}</div>
-          <div class="sub">${own ? `✔ ${own.count}× in your account (${esc([...own.where].join(', '))})`
-            : u.via ? 'Part of the recipe – comes from these achievements' : 'Reward from these achievements'}</div></div></summary>
+          <div class="sub">${own ? `✔ ${own.count}× in your account (${esc([...own.where].join(', '))})` : 'Reward from these achievements'}</div></div></summary>
       <ul class="tree">${kids}</ul></details></li>`;
   }
 
-  function unitNode(u, ui, tc, prev, flat) {
-    if (u.kind === 'single') return achNode(u.ids[0], tc, ui, prev, u.step);
-    const kids = unitSinks(u).map((id) => achNode(id, tc, ui)).join('') + prev;
-    if (flat) return kids; // Belohnung/Titel: das Ziel ist schon die Wurzel
+  const UNIT_ICON = { category: '📁', section: '📖', achievements: '🏆', named: '🏆' };
+  function unitNode(u, ui, tc, flat, reverse) {
+    const kids = unitSinks(u, reverse).map((id) => achNode(id, tc, ui)).join('');
+    if (flat) return kids; // das Ziel ist schon die Wurzel
     const states = u.ids.map((id) => nodeState(S.ach.get(id)));
     if (u.kind === 'component') return itemLi(u, states, kids);
     const done = states.filter((s) => s === 'done').length;
     const state = branchState(states);
     return `<li class="tgroup s-${state}"><details><summary><span class="st">${ST_ICON[state]}</span>
-        <span class="t-ico">${u.kind === 'category' ? '📁' : '🏆'}</span>
-        ${u.step ? `<span class="pill step">${esc(u.step)}</span>` : ''}<strong>${esc(u.kind === 'achievements' ? 'Achievements' : u.title)}</strong>
+        <span class="t-ico">${UNIT_ICON[u.kind] || '📁'}</span><strong>${esc(u.kind === 'achievements' ? 'Achievements' : u.title)}</strong>
         <span class="pill${S.account && done === u.ids.length ? ' ok' : ''}">${S.account ? `${done}/${u.ids.length}` : u.ids.length}</span>
         ${u.kind === 'category' ? '<span class="sub">achievement category</span>' : ''}</summary>
       <ul class="tree">${kids}</ul></details></li>`;
   }
 
-  // Set: die Teile der gewählten Gewichtsklasse mit Stand in der Waffenkammer
-  function piecesNode(entry, weight) {
-    const pieces = entry.pieces.filter((p) => p.weight === weight);
-    const arm = S.unlocks?.legendary;
-    const have = arm ? pieces.filter((p) => arm.get(p.id)).length : null;
-    const state = have == null ? 'unknown' : have === pieces.length ? 'done' : 'open';
-    return `<li class="tgroup s-${state}"><details${state === 'done' ? '' : ' open'}><summary><span class="st">${ST_ICON[state]}</span><span class="t-ico">🛡️</span>
-        <strong>${esc(weight)} pieces</strong>
-        ${have != null ? `<span class="pill${have === pieces.length ? ' ok' : ''}">${have}/${pieces.length} in your armory</span>` : `<span class="pill">${pieces.length}</span>`}</summary>
-      <ul class="tree">${pieces.map((p) => {
-        const ok = arm?.get(p.id);
-        return `<li class="tleaf${ok ? ' s-done' : ''}"><span class="st">${arm ? (ok ? '✔' : '○') : '•'}</span>${p.icon ? `<img class="mini" src="${esc(p.icon)}" alt="">` : ''}
-          <span class="r-Legendary">${esc(Collections.nameOf(p, S.lang))}</span></li>`;
-      }).join('')}</ul></details></li>`;
+  // ---------- Rezept-/Erwerbsbaum (Legendäre, Rüstungsteile) ----------
+  // Mengen werden von oben nach unten durchgereicht; was schon im Account liegt, wird verbraucht
+  // (gemeinsam genutzte Materialien zählen nur einmal) und sein Teilbaum entfällt.
+  const fmtNum = (n) => Math.round(n).toLocaleString('en-US');
+  const SOURCE = { 'mystic forge': 'Mystic Forge' };
+  const mkLeaf = (html, state) => ({ html: `<li class="tleaf s-${state}"><span class="st">${ST_ICON[state] || '•'}</span>${html}</li>`, state });
+
+  function currencyLeaf(g, qty) {
+    const cur = S.currencies?.get(g.cur);
+    const have = S.wallet ? (S.wallet.get(g.cur) || 0) : null;
+    const state = have == null ? 'unknown' : have >= qty ? 'done' : 'open';
+    const label = g.cur === 1 ? coins(qty) : `${fmtNum(qty)} ${cur?.name || g.name || 'currency'}`;
+    return mkLeaf(`${cur?.icon ? `<img class="mini" src="${esc(cur.icon)}" alt="">` : ''}${esc(label)}
+      ${have != null ? `<span class="sub">you have ${g.cur === 1 ? coins(have) : fmtNum(have)}</span>` : ''}`, state);
+  }
+
+  function itemNode(id, need, ctx, path, depth) {
+    const n = ctx.items[id];
+    const it = S.colItems?.[id];
+    const name = it?.name || n?.name || `Item ${id}`;
+    let have = ctx.avail.get(id) || 0;
+    if (depth === 0 && S.unlocks?.legendary?.get(id)) have = need; // in der Legendären Waffenkammer
+    const use = Math.min(have, need);
+    ctx.avail.set(id, have - use);
+    const missing = need - use;
+    const kids = [];
+    if (missing > 0 && n && !path.has(id)) {
+      const p2 = new Set(path).add(id);
+      if (n.how === 'recipe' || n.how === 'vendor') {
+        const times = n.how === 'recipe' ? Math.ceil(missing / (n.outQty || 1)) : missing;
+        for (const g of n.ings) {
+          if (g.id) kids.push(itemNode(g.id, g.qty * times, ctx, p2, depth + 1));
+          else if (g.cur) kids.push(currencyLeaf(g, g.qty * times));
+          else kids.push(mkLeaf(esc(`${fmtNum(g.qty * times)}× ${g.name}`), S.account ? 'open' : 'unknown'));
+        }
+      }
+      // Erfolge als Quelle nur bei Kleinmengen (ein Erfolg gibt ein Stück, nicht 250 Materialien)
+      const achIds = [...(n.reqAch ? [n.reqAch] : []), ...(n.how !== 'recipe' && missing <= 3 ? n.achIds || [] : [])];
+      for (const aid of achIds) {
+        if (!S.ach.has(aid)) continue;
+        kids.push({ html: achNode(aid, ctx.tc, -1), state: nodeState(S.ach.get(aid)) });
+      }
+      if (n.reqText) kids.push(mkLeaf(`📍 ${esc(n.reqText)}`, S.account ? 'open' : 'unknown'));
+    }
+    const ks = kids.map((k) => k.state);
+    let state;
+    if (missing <= 0) state = 'done';
+    else if (!S.inv) state = 'unknown'; // ohne Inventar-Recht ist der Stand der Materialien unbekannt
+    else if (ks.length && ks.every((s) => s === 'done')) state = 'open'; // alles da – nur noch herstellen/kaufen
+    else state = ks.length ? (ks.some((s) => ['done', 'progress', 'open'].includes(s)) ? 'progress' : 'locked') : 'open';
+    const how = !n ? '' : n.how === 'recipe' ? (SOURCE[norm(n.source)] || n.source || 'Crafting')
+      : n.how === 'vendor' ? `Vendor: ${n.source}` : n.how === 'achievement' && missing <= 3 ? 'Achievement reward' : '';
+    const ready = missing > 0 && ks.length && ks.every((s) => s === 'done');
+    const leafish = n && (n.how === 'leaf' || (n.how === 'achievement' && missing > 3)); // kaufen/sammeln
+    const sub = [
+      missing <= 0 ? (depth === 0 && S.unlocks?.legendary?.get(id) ? '✔ in your armory' : '✔ in your account') : '',
+      ready ? '✔ everything needed is in your account' : '',
+      how,
+      leafish && missing > 0 ? `<span class="tp" data-item="${id}" data-need="${missing}"></span>` : '',
+      n ? `<a href="${wikiRoute('en', n.name)}">wiki ›</a>` : '',
+    ].filter(Boolean).join(' · ');
+    if (leafish && missing > 0) ctx.leaves.push({ id, missing });
+    const known = S.inv || (depth === 0 && S.unlocks?.legendary);
+    const count = known ? `<span class="pill${missing <= 0 ? ' ok' : ''}">${fmtNum(use)}/${fmtNum(need)}</span>` : `<span class="pill">${fmtNum(need)}×</span>`;
+    const html = `<li class="titem s-${state}"><details><summary><span class="st">${ST_ICON[state]}</span>
+        ${(it?.icon || n?.icon) ? `<img class="icon" src="${esc(it?.icon || n.icon)}" alt="">` : '<span class="icon ph"></span>'}
+        <div class="grow"><div class="title${(it?.rarity || n?.rarity) ? ` r-${esc(it?.rarity || n.rarity)}` : ''}">${esc(name)}</div>
+          <div class="sub">${sub}</div></div>${count}</summary>
+      <ul class="tree">${kids.map((k) => k.html).join('')}</ul></details></li>`;
+    return { html, state, missing, kidsHtml: kids.map((k) => k.html).join('') };
+  }
+
+  // Handelsposten-Preise der fehlenden Grundmaterialien nachtragen (Sofortkauf)
+  async function fillPrices(tree, leaves) {
+    const ids = [...new Set(leaves.map((l) => l.id))];
+    if (!ids.length) return 0;
+    await loadPrices(ids);
+    let total = 0;
+    tree.querySelectorAll('.tp[data-item]').forEach((el) => {
+      const p = priceCache.get(+el.dataset.item);
+      if (p?.buy) el.textContent = `💰 ${coins(p.buy * +el.dataset.need)} on the TP`;
+    });
+    for (const l of leaves) total += (priceCache.get(l.id)?.buy || 0) * l.missing;
+    return total;
   }
 
   async function showCollection(key, force = false) {
@@ -711,10 +807,12 @@
     let res;
     try {
       res = await Collections.resolve(entry, colCtx(onStatus), { force });
-      const itemIds = res.groups.map((g) => g.itemId).filter(Boolean);
+      const itemIds = [...new Set([...res.groups.map((g) => g.itemId).filter(Boolean), ...Object.keys(res.items || {}).map(Number)])];
       [S.colItems] = await Promise.all([
         itemIds.length ? GW2.resolve('Item', itemIds, S.lang).catch(() => ({})) : {},
-        S.unlockPromise, S.invPromise,
+        S.unlockPromise, S.invPromise, S.walletPromise,
+        res.items && !S.currencies ? GW2.get('/currencies', { ids: 'all', lang: S.lang })
+          .then((list) => { S.currencies = new Map(list.map((c) => [c.id, c])); }).catch(() => {}) : null,
       ]);
     } catch (e) {
       if (token === S.viewToken) $('#col-tree').innerHTML = `<p class="err">Could not build the collection: ${esc(e.message)}</p>`;
@@ -728,15 +826,30 @@
     S.colKey = entry.key;
     rememberMembers(entry, res);
     const weight = entry.kind === 'set' ? setWeight(entry) : null;
-    const groups = visibleGroups(entry, res, weight);
-    const units = buildUnits(groups, res.sequential);
-    const tc = { home: new Map(), shown: new Set(), units, sequential: res.sequential };
-    units.forEach((u, ui) => u.ids.forEach((id) => { if (!tc.home.has(id)) tc.home.set(id, ui); }));
-    const flat = entry.kind === 'reward' || entry.kind === 'title';
+    const tree = $('#col-tree');
+    const name = Collections.nameOf(entry, S.lang);
     let html = '';
-    if (res.sequential && units.length > 1) units.forEach((u, i) => { html = unitNode(u, i, tc, html, false); });
-    else html = units.map((u, i) => unitNode(u, i, tc, '', flat)).join('');
-    if (entry.kind === 'set' && weight) html = piecesNode(entry, weight) + html;
+    let tc;
+    let itemCtx = null;
+    const itemRoots = res.items ? (entry.kind === 'set' ? entry.pieces.filter((p) => p.weight === weight).map((p) => p.id) : res.roots || []) : [];
+    if (itemRoots.length && itemRoots.some((id) => res.items[id])) {
+      // Legendäre/Set: Rezept-/Erwerbsbaum mit Mengen
+      tc = { home: new Map(), shown: new Set(), units: [] };
+      itemCtx = { items: res.items, avail: new Map([...(S.inv || new Map())].map(([id, e]) => [id, e.count])), tc, leaves: [] };
+      const nodes = itemRoots.map((id) => itemNode(id, 1, itemCtx, new Set(), 0));
+      // Eine einzelne Legendäre ist schon die Wurzel: ihre Zutaten direkt zeigen
+      html = nodes.length === 1 && entry.kind !== 'set' && nodes[0].missing > 0 ? nodes[0].kidsHtml : nodes.map((x) => x.html).join('');
+      // Sammlungen mit dem Namen der Legendären (Precursor-Weg) als eigener Ast
+      const named = res.groups.filter((g) => g.kind === 'named');
+      if (named.length && nodes.some((x) => x.missing > 0)) html += unitNode({ kind: 'named', title: 'Collections', ids: named.flatMap((g) => g.ids) }, -1, tc, false, true);
+    } else {
+      const units = buildUnits(visibleGroups(entry, res, weight));
+      tc = { home: new Map(), shown: new Set(), units };
+      units.forEach((u, ui) => u.ids.forEach((id) => { if (!tc.home.has(id)) tc.home.set(id, ui); }));
+      const reverse = entry.kind === 'mount';
+      const flat = entry.kind === 'reward' || entry.kind === 'title' || (entry.kind === 'mount' && units.length === 1);
+      html = units.map((u, i) => unitNode(u, i, tc, flat, reverse)).join('');
+    }
 
     if (entry.kind === 'set') {
       const have = WEIGHTS.filter((w) => entry.pieces.some((p) => p.weight === w));
@@ -744,38 +857,67 @@
       $('#col-weights').querySelectorAll('button').forEach((b) => { b.onclick = () => { Store.set('setWeight', b.dataset.weight); renderCollection(entry, res); }; });
     }
 
-    const tree = $('#col-tree');
-    const name = Collections.nameOf(entry, S.lang);
     tree.innerHTML = html
-      ? `<h2>What you need</h2><div class="troot">${colIcon(entry)}<strong>${esc(name)}</strong> ${unlockedPill(entry, weight)}</div>
+      ? `<h2>What you need</h2>${res.note ? `<p class="col-note">ℹ️ ${esc(res.note)}</p>` : ''}
+        <div class="troot">${colIcon(entry)}<strong>${esc(name)}</strong> ${unlockedPill(entry, weight)}</div>
         <ul class="tree root">${html}</ul>`
-      : `<h2>What you need</h2><p class="muted">No achievements found for this collection.
+      : `<h2>What you need</h2><p class="muted">Nothing found for this collection.
           ${res.wikiError ? `The wiki could not be read (${esc(res.wikiError)}).` : 'It is probably unlocked through the story, crafting or a vendor – see “How to get it” below.'}</p>`;
 
     // Nächster Schritt: der am tiefsten liegende offene Erfolg (das, was man zuerst machen kann)
     const depth = (el) => { let d = 0; for (let p = el.parentElement; p && p !== tree; p = p.parentElement) if (p.tagName === 'LI') d++; return d; };
-    const cands = S.account ? [...tree.querySelectorAll('.tnode.s-progress, .tnode.s-open')].filter((el) => !el.closest('.titem.s-done')) : [];
+    // „N von diesen“-Listen nur, wenn sonst nichts offen ist – dort ist der Meta-Erfolg selbst der Schritt
+    const open = S.account ? [...tree.querySelectorAll('.tnode.s-progress, .tnode.s-open')] : [];
+    const outside = open.filter((li) => !li.closest('.tpick'));
+    const cands = outside.length ? outside : open;
     cands.sort((x, y) => depth(y) - depth(x) || y.classList.contains('s-progress') - x.classList.contains('s-progress'));
     const next = cands[0];
-    tree.querySelectorAll('.tree.root > li:not(.s-done) > details').forEach((d) => { d.open = true; });
+    // Aufklappen ohne Infokasten (data-auto): die Zwischenstufen zeigen nur ihre Äste
+    const autoOpen = (d) => { if (!d.open) { if (d.parentElement.classList.contains('tnode')) d.parentElement.dataset.auto = '1'; d.open = true; } };
+    tree.querySelectorAll('.tree.root > li:not(.s-done) > details').forEach(autoOpen);
     if (next) {
       next.classList.add('current');
       next.querySelector('.title').insertAdjacentHTML('beforeend', ' <span class="pill warn">next up</span>');
-      for (let p = next.parentElement; p && p !== tree; p = p.parentElement) if (p.tagName === 'DETAILS') p.open = true;
+      for (let p = next.parentElement; p && p !== tree; p = p.parentElement) if (p.tagName === 'DETAILS') autoOpen(p);
       next.querySelector('details').open = true;
+      delete next.dataset.auto;
     }
 
-    const st = colStats(groups);
+    // Stand: im Rezeptbaum zählen nur die Erfolge, die noch gebraucht werden
+    const st = itemCtx
+      ? (() => {
+        // „N von diesen“-Listen zählen nicht mit – dort reicht ein Teil
+        const ids = [...new Set([...tree.querySelectorAll('.tnode')].filter((li) => !li.closest('.tpick')).map((li) => +li.dataset.id))];
+        let done = 0, ap = 0, apMax = 0;
+        for (const id of ids) {
+          const inf = Progress.info(S.ach.get(id), S.progress.get(id));
+          if (inf.finished) done++;
+          ap += inf.earned;
+          apMax += isFinite(inf.possible) ? inf.possible : inf.earned;
+        }
+        return { done, total: ids.length, ap, apMax };
+      })()
+      : colStats(visibleGroups(entry, res, weight));
+    const comps = itemCtx ? [...tree.querySelectorAll('.tree.root > .titem')] : [];
+    const compsDone = comps.filter((li) => li.classList.contains('s-done')).length;
     const nextA = next && S.ach.get(+next.dataset.id);
     $('#col-summary').innerHTML = S.account
-      ? `<div class="focus-status">${bar(st.total ? st.done / st.total : 0)}
-          <span>${st.done} / ${st.total} achievements done</span>
-          <span class="pill">${st.ap}/${st.apMax} AP</span> ${unlockedPill(entry, weight)}</div>
+      ? `<div class="focus-status">${bar(st.total ? st.done / st.total : comps.length ? compsDone / comps.length : 0)}
+          ${comps.length ? `<span>${compsDone} / ${comps.length} ${entry.kind === 'set' ? 'pieces' : 'components'} ready</span>` : ''}
+          ${st.total ? `<span class="pill">${st.done}/${st.total} achievements</span><span class="pill">${st.ap}/${st.apMax} AP</span>` : ''}
+          ${unlockedPill(entry, weight)} <span class="pill" id="col-cost" hidden></span></div>
         ${nextA ? `<p class="next-up">▶ Next up: <a href="#" data-goto="${nextA.id}">${esc(nextA.name)}</a></p>`
-          : st.total && st.done === st.total ? '<p class="ok-text">✔ All achievements of this collection are done.</p>'
-            : st.total ? '<p class="muted">Everything left is still locked – expand a 🔒 step to see how to unlock it.</p>' : ''}`
+          : st.total && st.done === st.total && !comps.length ? '<p class="ok-text">✔ All achievements of this collection are done.</p>'
+            : st.total && st.done < st.total ? '<p class="muted">Everything left is still locked – expand a 🔒 step to see how to unlock it.</p>' : ''}
+        ${itemCtx && !S.inv ? '<p class="muted">Add the key permission <code>inventories</code> to see which materials you already have.</p>' : ''}`
       : `<div class="focus-status"><span class="pill">${st.total} achievements</span>
           <span class="muted"><a href="#/settings">Add an API key</a> to see where you stand.</span></div>`;
+    if (itemCtx) {
+      fillPrices(tree, itemCtx.leaves).then((total) => {
+        const el = $('#col-cost');
+        if (el && total) { el.hidden = false; el.textContent = `💰 ≈ ${coins(total)} for the missing tradable materials`; }
+      });
+    }
 
     const acq = $('#col-acq');
     if (res.acquisition) {
@@ -788,8 +930,8 @@
     const wikiBased = ['mount', 'legendary', 'set'].includes(entry.kind);
     $('#col-foot').innerHTML = !wikiBased
       ? 'Source: GW2 API (achievement rewards, categories and prerequisites).'
-      : `${res.wikiError && html ? `⚠ The wiki could not be read (${esc(res.wikiError)}) – this list comes from the GW2 API only and may be incomplete.<br>` : ''}
-        Source: ${res.wikiTitle ? `wiki page <a href="${wikiRoute(S.wikiLang, res.wikiTitle)}">${esc(res.wikiTitle)}</a>, ` : ''}GW2 API rewards and prerequisites
+      : `${res.wikiError && html && !itemCtx ? `⚠ The wiki could not be read (${esc(res.wikiError)}) – this list may be incomplete.<br>` : ''}
+        Source: ${res.wikiTitle ? `wiki page <a href="${wikiRoute(S.wikiLang, res.wikiTitle)}">${esc(res.wikiTitle)}</a>, ` : ''}${itemCtx ? 'wiki recipes and vendors, ' : ''}GW2 API
         · built ${new Date(res.ts).toLocaleDateString()} · <button class="link" id="col-rebuild">↻ rebuild</button>`;
     const rebuild = $('#col-rebuild');
     if (rebuild) rebuild.onclick = () => showCollection(entry.key, true);
@@ -798,7 +940,9 @@
       tree.dataset.bound = '1';
       tree.addEventListener('toggle', (e) => {
         const li = e.target.parentElement;
-        if (e.target.open && li?.classList.contains('tnode')) fillNode(li);
+        if (!li?.classList.contains('tnode')) return;
+        if (li.dataset.auto) { if (!e.target.open) delete li.dataset.auto; return; } // automatisch geöffnet
+        if (e.target.open) fillNode(li);
       }, true);
     }
     if (next) fillNode(next);
@@ -817,10 +961,11 @@
       if (seen.has(x.id)) return '';
       seen.add(x.id);
       if (document.getElementById(`node-${x.id}`)) return refNode(x, null, d ? '↪ see above' : '↪ unlocks it – see above');
-      const kids = d < 3 ? directPrereqs(x).map((p) => lazy(S.ach.get(p), d + 1)).join('') : '';
+      const kids = d < 3 ? directKids(x).map((k) => lazy(S.ach.get(k.id), d + 1)).join('') : '';
       return nodeLi(x, kids, '', d ? '' : 'unlocks it');
     };
-    const html = (uh.achs || []).filter((x) => x.id !== a.id && !(a.prerequisites || []).includes(x.id)).map((x) => lazy(x, 0)).join('');
+    const known = new Set(relKids(a).map((k) => k.id)); // hängt schon über die API-Beziehung darunter
+    const html = (uh.achs || []).filter((x) => x.id !== a.id && !known.has(x.id)).map((x) => lazy(x, 0)).join('');
     if (html) ul.insertAdjacentHTML('beforeend', html);
   }
 
@@ -910,6 +1055,7 @@
     const li = document.getElementById(`node-${id}`);
     if (!li) { location.hash = `#/a/${id}`; return; }
     for (let p = li.parentElement; p; p = p.parentElement) if (p.tagName === 'DETAILS') p.open = true;
+    delete li.dataset.auto;
     li.querySelector('details').open = true;
     fillNode(li);
     li.scrollIntoView({ behavior: 'smooth', block: 'center' });
@@ -1455,7 +1601,7 @@
   // „Teil von …“: als Sammlungs-Baum, wenn die Seite eine Sammlung oder Kategorie ist, sonst die Wiki-Seite
   function partOfLine(title) {
     const col = colForTitle(title);
-    if (col && col.key === S.colKey && location.hash.startsWith('#/c/')) return ''; // schon in diesem Baum
+    if (location.hash.startsWith('#/c/')) return ''; // im Sammlungs-Baum ist die Kette schon zu sehen
     return col
       ? `Part of the <a href="#/c/${encodeURIComponent(col.key)}">${esc(col.name)}</a> collection – see the whole chain as a tree ›`
       : `Part of <a href="${wikiRoute(S.wikiLang, title)}">${esc(title)}</a> – the full chain and walkthrough are there ›`;
@@ -1980,9 +2126,9 @@
       S.key = key;
       Store.set('apiKey', key);
       await loadProgress();
-      const extra = ['inventories', 'characters', 'unlocks'].filter((p) => !t.permissions.includes(p));
+      const extra = ['inventories', 'characters', 'unlocks', 'wallet'].filter((p) => !t.permissions.includes(p));
       info.innerHTML = `<span class="ok-text">✔ Key “${esc(t.name)}” saved – progress for ${S.progress.size} achievements loaded.</span>
-        ${extra.length ? `<br><span class="muted">Tip: add ${extra.map((x) => `<code>${x}</code>`).join(' + ')} to see which collection items you already own, your mounts and your legendary armory.</span>` : ''}`;
+        ${extra.length ? `<br><span class="muted">Tip: add ${extra.map((x) => `<code>${x}</code>`).join(' + ')} to see which collection items and currencies you already own, your mounts and your legendary armory.</span>` : ''}`;
       return true;
     } catch (e) {
       info.innerHTML = `<span class="err">Invalid key: ${esc(e.message)}</span>`;
@@ -1996,7 +2142,7 @@
       <p class="muted">So the tool knows what you already have: create a key on
         <a href="https://account.arena.net/applications" target="_blank" rel="noopener">account.arena.net/applications</a>
         with the permissions <code>account</code> and <code>progression</code> and paste it here.
-        Optional: add <code>inventories</code>, <code>characters</code> and <code>unlocks</code> so the tool can see which collection items you already own, your mounts and your legendary armory.
+        Optional: add <code>inventories</code>, <code>characters</code>, <code>unlocks</code> and <code>wallet</code> so the tool can see which items and currencies you already own, your mounts and your legendary armory.
         It is only stored locally and only sent to the official GW2 API.</p>
       <div class="key-row">
         <input id="home-key" type="password" placeholder="Paste API key here (Ctrl+V)" autocomplete="off">
@@ -2015,7 +2161,7 @@
         <h2>GW2 API key</h2>
         <p class="muted">Create a key on <a href="https://account.arena.net/applications" target="_blank" rel="noopener">account.arena.net/applications</a>
           with the permissions <code>account</code> and <code>progression</code>.
-          Optional: <code>inventories</code> + <code>characters</code> – shows collection items you already own (bank, materials, bags); <code>unlocks</code> – your mounts and legendary armory in the collections.
+          Optional: <code>inventories</code> + <code>characters</code> – shows collection items you already own (bank, materials, bags); <code>unlocks</code> – your mounts and legendary armory; <code>wallet</code> – currencies (karma, gold …) in legendary recipes.
           The key is only stored locally in your browser and only sent to api.guildwars2.com.</p>
         <input id="s-key" type="password" placeholder="XXXXXXXX-XXXX-…" value="${esc(S.key)}" autocomplete="off">
         <div class="row-btns"><button id="s-save">Save & check</button><button id="s-clear" class="secondary">Remove key</button></div>

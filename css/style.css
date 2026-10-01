@@ -267,7 +267,7 @@ ul.tree details { margin: 0; }
 }
 .tnode > details > summary::-webkit-details-marker, .titem > details > summary::-webkit-details-marker { display: none; }
 .tnode > details > summary:hover, .titem > details > summary:hover { border-color: var(--accent); }
-.tnode > details[open] > summary { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+.tnode > details[open]:has(> .tbody:not(:empty)) > summary { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
 .tnode .icon, .titem .icon, .troot .icon { width: 30px; height: 30px; }
 .tnode .title, .titem .title { font-weight: 600; }
 .tnode summary .sub, .titem summary .sub { margin-left: 0; display: block; }
@@ -296,6 +296,7 @@ ul.tree:empty { display: none; }
 .tnode.s-locked .title { color: var(--muted); }
 .tnode.current > details > summary { border-color: var(--accent); background: #d9a44118; }
 .tnode.flash > details > summary { box-shadow: 0 0 0 2px var(--accent-2); }
+.tbody:empty { display: none; }
 .tbody { padding: .6rem .9rem .8rem; border: 1px solid var(--line); border-top: none; border-radius: 0 0 8px 8px; background: var(--panel-2); margin-bottom: .3rem; }
 .tbody .req { margin: 0 0 .3rem; }
 .tbody .desc { font-style: italic; color: #cfc9b8; margin: 0 0 .5rem; font-size: .9rem; }
@@ -315,3 +316,5 @@ ul.t-steps li { margin: .1rem 0; }
   ul.tree { margin-left: .3rem; padding-left: .7rem; }
   ul.tree > li::before { left: -.7rem; width: .55rem; }
 }
+.col-note { background: var(--panel); border-left: 3px solid var(--accent); padding: .45rem .8rem; border-radius: 0 6px 6px 0; margin: .4rem 0 .8rem; font-size: .92rem; }
+.titem .sub a { margin-left: .1rem; }

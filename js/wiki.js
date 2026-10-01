@@ -225,5 +225,12 @@ const Wiki = (() => {
     return rev?.slots?.main?.content ?? rev?.content ?? null;
   }
 
-  return { base, pageUrl, searchUrl, findPage, parse, page, sanitize, acquisition, fullImageUrl, mapIcons, rawContent };
+  // Semantic-MediaWiki-Abfrage (nur englisches Wiki): Ergebnis als Liste [{ title, printouts }]
+  async function ask(query) {
+    const j = await api('en', { action: 'ask', query });
+    const res = j.query?.results || {};
+    return Array.isArray(res) ? [] : Object.entries(res).map(([title, r]) => ({ title, printouts: r.printouts || {} }));
+  }
+
+  return { base, pageUrl, searchUrl, findPage, parse, page, sanitize, acquisition, fullImageUrl, mapIcons, rawContent, ask };
 })();

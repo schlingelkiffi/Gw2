@@ -4,10 +4,10 @@ Ein Web-Tool für Guild-Wars-2-Erfolge, das komplett im Browser läuft. Oberflä
 
 - **Suche**: Du findest jeden Erfolg über Name, Beschreibung oder ID.
 - **Sammlungen als Baum**: Suchst du nach einem Reittier, einer Legendären, einem Rüstungsset oder irgendetwas, das ein Erfolg als Belohnung gibt (Item oder Titel) – z. B. „Skyscale“, „Endless Summer“, „Envoy“ oder einfach „legendary“ –, steht oben ein Sammlungs-Eintrag mit Symbol. Ein Klick darauf zeigt einen Baum mit dem Ziel oben und darunter allem, was man dafür braucht:
-  - bei Reittieren die Sammlungsschritte (Schritt 4 enthält Schritt 3 usw.), bei Legendären die Bauteile (z. B. „Gift of the Hylek“ ← „Radiance of the Sun God“), darunter jeweils die Voraussetzungen als Äste,
-  - deinen Stand pro Erfolg (✔ erledigt, ◐ angefangen, ○ offen, 🔒 gesperrt), Bauteile, die schon im Account liegen, und den nächsten sinnvollen Schritt (aufgeklappt),
-  - aufgeklappt den Freischalt-Weg aus dem Wiki (die freischaltenden Erfolge hängen als Äste darunter), die offenen Schritte und die Belohnung.
-  Rüstungssets haben einen Umschalter leicht/mittel/schwer. Optionales (z. B. Rennen) gehört nicht zum Baum. Jede Erfolgsseite verlinkt ihre Kategorie als Baum.
+  - **Reittiere:** die Erfolge aus dem Freischalt-Abschnitt der Wiki-Seite, je Weg ein Ast (z. B. Skyscale: „Living World Season 4“ / „Secrets of the Obscure“). Die Verschachtelung kommt aus der API: Voraussetzungen, Teil-Sammlungen (ein Schritt verlangt das Item, das ein anderer Erfolg gibt) und Sperrtexte („Unlocks … after completing Raising Skyscales“).
+  - **Legendäre und Rüstungssets:** der komplette Rezept- und Erwerbsbaum aus den Wiki-Daten (Semantic MediaWiki): Rezepte mit Mengen und Handwerksberuf, Händler mit Kosten und Bedingung (z. B. „Gift of the Hylek“ ← Erfolg „Radiance of the Sun God“ + 250 Sun Beads), Kartenabschluss, Erfolgs-Belohnungen. Mengen werden mit Bank, Materiallager, Taschen und Geldbörse verrechnet; was du schon hast, ist abgehakt. Fehlende handelbare Materialien zeigen den Handelsposten-Preis, oben steht die Summe. Gen-2-Sammlungen („HOPE I–IV“) hängen als eigener Ast dran. Rüstungssets haben einen Umschalter leicht/mittel/schwer.
+  - deinen Stand pro Knoten (✔ erledigt, ◐ angefangen, ○ offen, 🔒 gesperrt) und den nächsten sinnvollen Schritt – der Weg dorthin ist aufgeklappt. Aufgeklappt zeigt ein Erfolg den Freischalt-Weg aus dem Wiki, die offenen Schritte und die Belohnung.
+  Optionales (Rennen, verwandte Erfolge) gehört nicht zum Baum. Jede Erfolgsseite verlinkt ihre Kategorie als Baum.
 - **Run-Through**: Für einen Erfolg siehst du
   - offene **Voraussetzungen** (rekursiv, in der richtigen Reihenfolge),
   - alle **Einzelschritte** (Objekte, Items, Skins, Minis) mit deinem Stand aus der API. Erledigte Schritte werden abgehakt, die übrigen kannst du manuell abhaken,
@@ -25,6 +25,7 @@ Ein Web-Tool für Guild-Wars-2-Erfolge, das komplett im Browser läuft. Oberflä
 - **Belohnungs-Filter:** In *Easy AP* nach Meisterschaftspunkt, Titel, Item oder Gold filtern.
 - **Timegates:** Tageslimits aus dem Wiki, Fortschritt heute und Countdown bis zum Tagesreset (00:00 UTC).
 - **Reittiere & Legendäre Waffenkammer:** Mit dem Key-Recht `unlocks` (für die Waffenkammer zusätzlich `inventories`) zeigen die Sammlungen, ob du das Reittier schon hast bzw. die Legendäre in deiner Waffenkammer liegt.
+- **Geldbörse:** Mit dem Key-Recht `wallet` zeigen die Rezeptbäume, wie viel Karma, Gold und andere Währungen du schon hast.
 
 ## Desktop-Programm (Windows/Linux)
 

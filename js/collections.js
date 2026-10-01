@@ -4,9 +4,8 @@
 // Reittier oder einer Legendären gehören, steht auf der Wiki-Seite: verlinkte Erfolgskategorien und Erfolge sowie
 // Bauteile (z. B. „Gift of the Hylek“), die ein Erfolg als Belohnung gibt. Dazu kommen die Voraussetzungen aus der API.
 const Collections = (() => {
-  const VERSION = 2;
+  const VERSION = 9;
   const MAX_AGE = 7 * 24 * 3600 * 1000;
-  const PAGE_BUDGET = 16; // höchstens so viele Bauteil-Seiten pro Sammlung nachladen
   const MAX_REWARDERS = 3; // Items, die mehr Erfolge geben, sind allgemeine Belohnungen (Truhen, Materialien)
   const norm = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ').trim();
   const escRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -15,7 +14,7 @@ const Collections = (() => {
 
   // Wiki-Abschnitte, deren Links die Erfolge liefern bzw. die nichts damit zu tun haben
   const ACQ = /acquisition|obtain|unlock|getting|crafting|recipe|collection|achievement|walkthrough|erwerb|freischalt|herstellung|rezept|sammlung|erfolg/i;
-  const SKIP = /used in|gallery|trivia|notes|see also|external|version|patch|related (items|skins)|skins|dyes|verwendung|galerie|wissenswertes|anmerkung|siehe auch|färb/i;
+  const SKIP = /used in|gallery|trivia|notes|see also|external|version|patch|related|skins|dyes|verwendung|galerie|wissenswertes|anmerkung|siehe auch|verwandt|färb/i;
   const GIFT = /^(gift|geschenk|gabe|don)\b/i;
   const KIND_WORDS = {
     mount: /^(mounts?|reittiere?|montures?|monturas?)$/,
@@ -85,8 +84,11 @@ const Collections = (() => {
       const names = namesByLang(langs, lists);
       const skins = await GW2.getMany('/mounts/skins', lists[0].map((t) => t.default_skin).filter(Boolean), { lang: langs[0] }).catch(() => []);
       const skinById = new Map(skins.map((s) => [s.id, s]));
+      const ALIAS = { turtle: 'Siege Turtle' }; // heißt in der API nur „Turtle“
       for (const t of lists[0]) {
-        entries.push({ key: `mount:${t.id}`, kind: 'mount', mountId: t.id, names: names.get(t.id), icon: skinById.get(t.default_skin)?.icon || null, sub: 'Mount' });
+        const e = { key: `mount:${t.id}`, kind: 'mount', mountId: t.id, names: names.get(t.id), icon: skinById.get(t.default_skin)?.icon || null, sub: 'Mount' };
+        if (ALIAS[t.id]) { e.alias = ALIAS[t.id]; e.wiki = { en: ALIAS[t.id] }; }
+        entries.push(e);
       }
     } catch (e) { console.warn('Reittiere', e); }
     try {
@@ -168,6 +170,7 @@ const Collections = (() => {
         const it = itemNames[0][id];
         if (!it?.name || it.type === 'CraftingMaterial') continue;
         const achIds = items.get(id);
+        if (achIds.some((aid) => norm(ctx.ach.get(aid)?.name) === norm(it.name))) continue; // Token einer Sammlung („Skyscale Care“)
         out.push({ key: `item:${id}`, kind: 'reward', itemId: id, names: namesOf(itemNames, id), icon: it.icon, rarity: it.rarity,
           sub: `Reward from ${achIds.length === 1 ? 'an achievement' : `${achIds.length} achievements`}`, achIds });
       }
@@ -205,13 +208,15 @@ const Collections = (() => {
     const hits = [];
     for (const e of all) {
       let best = -1;
-      for (const n of Object.values(e.names || {})) {
+      for (const n of [...Object.values(e.names || {}), e.alias].filter(Boolean)) {
         const nn = norm(n);
         best = Math.max(best, nn === nq ? 3 : nn.startsWith(nq) ? 2 : nn.includes(` ${nq}`) ? 1 : -1);
       }
       if (best >= 0) hits.push([best, e]);
     }
-    hits.sort((x, y) => y[0] - x[0] || KIND_ORDER[x[1].kind] - KIND_ORDER[y[1].kind] || nameOf(x[1], 'en').localeCompare(nameOf(y[1], 'en')));
+    // Ziele (Reittier, Legendäre, Set) vor einzelnen Belohnungen, dann nach Treffergüte
+    const bucket = (e) => (KIND_ORDER[e.kind] < 2 ? 0 : 1);
+    hits.sort((x, y) => bucket(x[1]) - bucket(y[1]) || y[0] - x[0] || KIND_ORDER[x[1].kind] - KIND_ORDER[y[1].kind] || nameOf(x[1], 'en').localeCompare(nameOf(y[1], 'en')));
     return hits.map((h) => h[1]);
   }
 
@@ -223,8 +228,7 @@ const Collections = (() => {
 
   // ---------- Indizes ----------
   const nameIdx = new Map(); // Sprache -> { ach: Map(Name -> ID), cat: Map(Name -> ID) }
-  async function namesFor(ctx) {
-    const lang = ctx.wikiLang;
+  async function namesFor(ctx, lang = ctx.wikiLang) {
     if (nameIdx.has(lang)) return nameIdx.get(lang);
     const data = lang === ctx.lang
       ? { achievements: [...ctx.ach.values()], categories: ctx.categories }
@@ -241,31 +245,7 @@ const Collections = (() => {
     return idx;
   }
 
-  // Belohnungs-Items in der Wiki-Sprache: Name -> { itemId, achIds }
-  const rewardIdx = new Map();
-  function rewardsFor(ctx) {
-    const lang = ctx.wikiLang;
-    if (!rewardIdx.has(lang)) {
-      const promise = (async () => {
-        const { items } = rewardMaps(ctx.ach);
-        const names = await GW2.resolve('Item', [...items.keys()], lang).catch(() => ({}));
-        const byName = new Map();
-        for (const [id, achs] of items) {
-          const n = names[id]?.name;
-          if (!n) continue;
-          const k = norm(n);
-          const prev = byName.get(k);
-          byName.set(k, { itemId: prev ? prev.itemId : id, achIds: [...new Set([...(prev?.achIds || []), ...achs])] });
-        }
-        return { byItem: items, byName };
-      })();
-      rewardIdx.set(lang, promise);
-      promise.catch(() => rewardIdx.delete(lang));
-    }
-    return rewardIdx.get(lang);
-  }
-
-  function reset() { nameIdx.clear(); rewardIdx.clear(); memo.clear(); rewardKey = ''; rewardEntries = []; }
+  function reset() { nameIdx.clear(); memo.clear(); rewardKey = ''; rewardEntries = []; }
 
   // ---------- Wiki-Seite zerlegen ----------
   // Inhalt in Abschnitte mit Überschriften-Kette teilen (h3 unter „Acquisition“ gehört dazu)
@@ -305,14 +285,21 @@ const Collections = (() => {
     return [...new Set([norm(title), a, b])].filter(Boolean);
   }
 
-  // Ein Bauteil, das genau ein oder zwei Erfolge als Belohnung geben (häufige Materialien zählen nicht)
-  function rewardMatch(rw, keys) {
-    for (const k of keys) {
-      const r = rw.byName.get(k);
-      if (r && r.achIds.length <= 2) return r;
-    }
-    return null;
-  }
+  // ---------- Rezept-/Erwerbsbaum (Wiki-SMW + API) ----------
+  // Pro Item: Rezept (Zutaten mit Item-ID und Menge), sonst Händler (Kosten, nötiger Erfolg/Kartenabschluss),
+  // sonst Erfolgs-Belohnung. Erweitert werden nur Gifts und Items ab „Exotic“ – Grundmaterialien bleiben Blätter.
+  const bound = (it) => (it?.flags || []).some((f) => f === 'AccountBound' || f === 'SoulbindOnAcquire');
+  // Weiter aufschlüsseln: Gifts, aufgestiegene/legendäre Items und gebundene exotische Ausrüstung (Precursor).
+  // Handelbares bleibt ein Blatt (kaufen statt Umwandlungsrezepte der Mystischen Schmiede).
+  const expandable = (it) => !!it && (GIFT.test(it.name)
+    || ((it.rarity === 'Ascended' || it.rarity === 'Legendary') && (bound(it) || it.type !== 'CraftingMaterial'))
+    || (it.rarity === 'Exotic' && bound(it) && ['Weapon', 'Armor', 'Trinket', 'Back'].includes(it.type)));
+  const MAX_ITEMS = 250;
+  const chunks = (arr, n) => { const out = []; for (let i = 0; i < arr.length; i += n) out.push(arr.slice(i, i + n)); return out; };
+  const smwVal = (x) => (x && typeof x === 'object' && 'fulltext' in x ? x.fulltext : x);
+  const pv = (p, key) => (p[key] || []).map(smwVal);
+  const rec = (r, key) => (r?.[key]?.item || []).map(smwVal)[0];
+  const stripParen = (t) => String(t || '').replace(/\s*\([^)]*\)\s*$/, '');
 
   async function pool(items, n, fn) {
     const out = new Array(items.length).fill(null);
@@ -320,152 +307,214 @@ const Collections = (() => {
     await Promise.all(Array.from({ length: Math.min(n, items.length) }, async () => {
       while (next < items.length) {
         const i = next++;
-        try { out[i] = await fn(items[i]); } catch (e) { console.warn('Sammlung', e); }
+        try { out[i] = await fn(items[i]); } catch (e) { console.warn('Wiki-Abfrage', e); }
       }
     }));
     return out;
   }
 
-  // Bauteil-Seite (z. B. „Gift of the Survivors“): Erfolge aus dem Erwerbs-Abschnitt, bei Bedarf eine Ebene tiefer
-  async function crawlComponent(title, ctx, idx, rw, budget, depth) {
-    if (budget.left-- <= 0) return [];
-    const page = await Wiki.parse(ctx.wikiLang, title).catch(() => null);
-    if (!page) return [];
-    const secs = splitSections(Wiki.sanitize(ctx.wikiLang, page.html));
-    const acq = secs.filter(isAcq);
-    const links = linksIn((acq.length ? acq : secs.slice(0, 1)).flatMap((s) => s.nodes));
-    const ids = [];
-    const achLinks = [];
-    const deeper = [];
-    for (const t of links) {
-      const keys = titleKeys(t);
-      const r = rewardMatch(rw, keys);
-      if (r) { ids.push(...r.achIds); continue; }
-      const k = keys.find((x) => idx.ach.has(x));
-      if (k) achLinks.push(idx.ach.get(k));
-      else if (GIFT.test(t) && norm(t) !== norm(page.title)) deeper.push(t);
-    }
-    // Viele Erfolge im Erwerbs-Abschnitt = allgemeines Material, kein bestimmter Weg
-    if (achLinks.length <= 3) ids.push(...achLinks);
-    if (!ids.length && depth > 0) {
-      for (const t of [...new Set(deeper)].slice(0, 4)) ids.push(...await crawlComponent(t, ctx, idx, rw, budget, depth - 1));
-    }
-    return [...new Set(ids)];
+  // Das Wiki erlaubt höchstens ~15 Oder-Werte pro Abfrage – daher Pakete zu 12, mehrere gleichzeitig
+  const SMW_CHUNK = 12;
+  async function askChunks(values, build) {
+    const rows = await pool(chunks(values, SMW_CHUNK), 3, (part) => Wiki.ask(build(part)));
+    return rows.flatMap((r) => r || []);
   }
 
+  async function smwRecipes(ids) {
+    const out = new Map();
+    const rows = await askChunks(ids, (part) => `[[Has context::Recipe]][[Has output game id::${part.join('||')}]]|?Has ingredient with id|?Has recipe source|?Has output quantity|?Has output game id|?Requires discipline|?Requires rating|limit=500`);
+    rows.sort((a, b) => a.title.localeCompare(b.title));
+    for (const r of rows) {
+      const oid = +pv(r.printouts, 'Has output game id')[0];
+      if (!oid || out.has(oid)) continue;
+      const ings = (r.printouts['Has ingredient with id'] || []).map((g) => ({
+        idx: +rec(g, 'Has ingredient index') || 0, qty: +rec(g, 'Has ingredient quantity') || 1,
+        id: +rec(g, 'Has ingredient id') || null, name: stripParen(rec(g, 'Has ingredient name')),
+      })).sort((a, b) => a.idx - b.idx);
+      if (ings.some((g) => g.id === oid)) continue; // Umwandlungsrezept (braucht sich selbst) – kein sinnvoller Weg
+      // Quelle: Handwerksberuf mit Stufe („Tailor 500“), sonst Mystische Schmiede bzw. „Crafting“
+      const disc = pv(r.printouts, 'Requires discipline').map(stripParen).filter(Boolean);
+      const rating = +pv(r.printouts, 'Requires rating')[0] || 0;
+      const src = String(pv(r.printouts, 'Has recipe source')[0] || '');
+      const who = disc.length > 3 ? 'Any crafting discipline' : disc.join(', ');
+      const source = disc.length ? `${who}${rating ? ` ${rating}` : ''}` : /mystic forge/i.test(src) ? 'Mystic Forge' : 'Crafting';
+      out.set(oid, { source, outQty: +pv(r.printouts, 'Has output quantity')[0] || 1, ings });
+    }
+    return out;
+  }
+
+  async function smwVendors(names) {
+    const out = new Map(); // Name -> { vendor, costs: [{ name, qty }], req }
+    const rows = await askChunks(names, (part) => `[[Sells item::${part.join('||')}]][[Is historical::f]]|?Sells item|?Has item cost|?Has requirement|?Has vendor|limit=500`);
+    for (const r of rows) {
+      const sold = norm(stripParen(pv(r.printouts, 'Sells item')[0]));
+      if (!sold || out.has(sold)) continue;
+      const costs = (r.printouts['Has item cost'] || [])
+        .map((c) => ({ qty: +rec(c, 'Has item value') || 1, name: stripParen(rec(c, 'Has item currency')) }))
+        .filter((c) => c.name);
+      out.set(sold, { vendor: stripParen(pv(r.printouts, 'Has vendor')[0]), costs, req: String(pv(r.printouts, 'Has requirement')[0] || '') });
+    }
+    return out;
+  }
+
+  async function smwItemIds(names) {
+    const out = new Map();
+    const rows = await askChunks(names, (part) => `[[Has canonical name::${part.join('||')}]][[Has context::Item]]|?Has game id|?Has canonical name|limit=500`);
+    for (const r of rows) {
+      const id = +pv(r.printouts, 'Has game id')[0];
+      const n = norm(pv(r.printouts, 'Has canonical name')[0] || stripParen(r.title));
+      if (id && !out.has(n)) out.set(n, id);
+    }
+    return out;
+  }
+
+  async function itemTree(rootIds, ctx, status) {
+    const items = {};
+    const rewards = rewardMaps(ctx.ach).items;
+    const enIdx = await namesFor(ctx, 'en');
+    const currencies = new Map([['gold', 1], ['coin', 1]]);
+    try { for (const c of await GW2.get('/currencies', { ids: 'all', lang: 'en' })) currencies.set(norm(c.name), c.id); } catch { /* ohne Währungsnamen */ }
+    // Währung auch bei Einzahl/Mehrzahl erkennen („Tale of Dungeon Delving“ = „Tales of Dungeon Delving“)
+    const curId = (name) => {
+      const k = norm(name);
+      return [k, `${k}s`, k.replace(/^(\S+)/, '$1s'), k.replace(/s$/, '')].map((x) => currencies.get(x)).find(Boolean) || null;
+    };
+    const ing = (name, qty, id) => {
+      if (id) return { id, qty };
+      const cur = curId(name);
+      if (cur) return { cur, qty: norm(name) === 'gold' ? qty * 10000 : qty, name };
+      return { name, qty };
+    };
+    let level = [...new Set(rootIds)];
+    for (let depth = 0; level.length && Object.keys(items).length < MAX_ITEMS; depth++) {
+      status(`Reading recipes and vendors… (level ${depth + 1})`);
+      const info = new Map((await GW2.getMany('/items', level, { lang: 'en' }).catch(() => [])).map((x) => [x.id, x]));
+      const last = depth >= 6;
+      const expand = last ? [] : level.filter((id) => depth === 0 || expandable(info.get(id)));
+      const recs = expand.length ? await smwRecipes(expand) : new Map();
+      const toVendor = expand.filter((id) => !recs.has(id) && !(rewards.get(id) || []).length && info.get(id));
+      const vend = toVendor.length ? await smwVendors(toVendor.map((id) => info.get(id).name)) : new Map();
+      const costNames = [...new Set([...vend.values()].flatMap((v) => v.costs.map((c) => c.name)).filter((n) => !curId(n)))];
+      const costIds = costNames.length ? await smwItemIds(costNames) : new Map();
+      const next = [];
+      for (const id of level) {
+        const it = info.get(id);
+        const node = { id, name: it?.name || `Item ${id}`, rarity: it?.rarity, icon: it?.icon, how: 'leaf', ings: [] };
+        const achs = rewards.get(id) || [];
+        // Erfolgs-Belohnung nur bei gebundenen Items – Handelbares kauft man einfacher
+        if (achs.length && achs.length <= MAX_REWARDERS && (bound(it) || depth === 0)) node.achIds = achs;
+        const r = recs.get(id);
+        const v = vend.get(norm(it?.name || ''));
+        if (r) {
+          Object.assign(node, { how: 'recipe', source: r.source, outQty: r.outQty, ings: r.ings.map((g) => ing(g.name, g.qty, g.id)) });
+        } else if (v) {
+          Object.assign(node, { how: 'vendor', source: v.vendor, ings: v.costs.map((c) => ing(c.name, c.qty, costIds.get(norm(c.name)))) });
+          const reqText = v.req.replace(/\[\[(?:[^\]|]*\|)?([^\]]+)\]\]/g, '$1').trim();
+          const reqAch = enIdx.ach.get(norm(reqText.replace(/^(the )?achievement /i, '')));
+          if (reqAch) node.reqAch = reqAch;
+          else if (reqText) node.reqText = reqText.replace(/^character has map completed /i, 'Map completion: ');
+        } else if (node.achIds) node.how = 'achievement';
+        items[id] = node;
+        for (const g of node.ings) if (g.id && !items[g.id]) next.push(g.id);
+      }
+      level = [...new Set(next)].filter((x) => !items[x]);
+    }
+    return items;
+  }
+
+  // Wiki-Seite des Ziels (Reittier, Legendäre, Set) laden und in Abschnitte teilen
+  async function wikiPage(entry, ctx) {
+    const wikiName = entry.wiki?.[ctx.wikiLang] || nameOf(entry, ctx.wikiLang);
+    const title = entry.kind === 'set'
+      ? await Wiki.findPage(ctx.wikiLang, { name: `${wikiName} ${ctx.wikiLang === 'de' ? 'Rüstung' : 'armor'}` })
+      : await Wiki.findPage(ctx.wikiLang, {
+        id: entry.itemId, name: wikiName, context: entry.kind === 'mount' ? 'Mount' : 'Item', preferId: entry.kind === 'legendary',
+      });
+    if (!title) throw new Error('no wiki page found');
+    const page = await Wiki.parse(ctx.wikiLang, title);
+    const secs = splitSections(Wiki.sanitize(ctx.wikiLang, page.html));
+    return { title: page.title, secs };
+  }
+  const sectionHtml = (list) => list.map((s) => [s.heading, ...s.nodes].filter(Boolean).map((n) => n.outerHTML).join('')).join('');
+
   // ---------- Erfolge einer Sammlung bestimmen ----------
-  // Ergebnis: Gruppen { kind: category|achievements|component|prereq, title, ids, catId?, itemId? }.
-  // sequential: die Gruppen sind aufeinanderfolgende Schritte (Reittier-Sammlungen).
+  // Ergebnis: Gruppen { kind: category|section|achievements|component|prereq, title, ids, catId?, itemId? },
+  // bei Legendären zusätzlich items (Rezept-/Erwerbsbaum) und roots (Wurzel-Items).
   async function build(entry, ctx) {
     const status = ctx.onStatus || (() => {});
     const catById = new Map(ctx.categories.map((c) => [c.id, c]));
     const groups = [];
     const placed = new Set();
     const place = (ids) => ids.filter((id) => ctx.ach.has(id) && !placed.has(id) && placed.add(id));
-    const addCategory = (cat, pos) => {
-      const ids = cat ? place(catIds(cat)) : [];
-      if (ids.length) groups.push({ kind: 'category', title: cat.name, catId: cat.id, ids, pos });
-    };
-    const rewarding = (itemId) => [...ctx.ach.values()].filter((a) => !periodic(a) && (a.rewards || []).some((r) => r.type === 'Item' && r.id === itemId)).map((a) => a.id);
-
     const name = entry.kind === 'category' ? catById.get(entry.catId)?.name : nameOf(entry, ctx.lang);
-    let wikiTitle = null;
-    let wikiError = null;
-    let acquisition = null;
-    let fromWiki = false;
+    const out = { v: VERSION, ts: Date.now(), key: entry.key, name, wikiTitle: null, wikiError: null, acquisition: null, note: null };
 
     if (entry.kind === 'category') {
-      addCategory(catById.get(entry.catId), 0);
+      const cat = catById.get(entry.catId);
+      const ids = place(catIds(cat));
+      if (ids.length) groups.push({ kind: 'category', title: cat.name, catId: cat.id, ids });
     } else if (entry.kind === 'reward' || entry.kind === 'title') {
       // Belohnung: die Erfolge, die sie geben (und deren Voraussetzungen)
       const ids = place(entry.achIds || []);
-      if (ids.length) groups.push({ kind: entry.kind === 'reward' ? 'component' : 'achievements', title: name, itemId: entry.itemId, ids, pos: 0 });
-    } else {
+      if (ids.length) groups.push({ kind: entry.kind === 'reward' ? 'component' : 'achievements', title: name, itemId: entry.itemId, ids });
+    } else if (entry.kind === 'mount') {
+      // Reittier: Erfolge aus den Listen/Tabellen der Freischalt-Abschnitte, je Unterabschnitt eine Gruppe
+      // (z. B. „Living World Season 4“ / „Secrets of the Obscure“). Kategorie-Links zählen nicht – das wäre zu viel.
       try {
         status('Reading the wiki page…');
-        const wikiName = nameOf(entry, ctx.wikiLang);
-        const title = entry.kind === 'set'
-          ? await Wiki.findPage(ctx.wikiLang, { name: `${wikiName} ${ctx.wikiLang === 'de' ? 'Rüstung' : 'armor'}` })
-          : await Wiki.findPage(ctx.wikiLang, {
-            id: entry.itemId, name: wikiName, context: entry.kind === 'mount' ? 'Mount' : 'Item', preferId: entry.kind === 'legendary',
-          });
-        if (!title) throw new Error('no wiki page found');
-        const page = await Wiki.parse(ctx.wikiLang, title);
-        wikiTitle = page.title;
-        const secs = splitSections(Wiki.sanitize(ctx.wikiLang, page.html));
-        const acq = secs.filter(isAcq);
-        if (acq.length) acquisition = acq.map((s) => [s.heading, ...s.nodes].filter(Boolean).map((n) => n.outerHTML).join('')).join('');
-        const scope = acq.length ? [secs[0], ...acq] : secs.filter((s) => !s.chain.some((t) => SKIP.test(t)));
-        const self = titleKeys(page.title);
-        const links = [...new Set(linksIn(scope.flatMap((s) => s.nodes)))].filter((t) => !titleKeys(t).some((k) => self.includes(k)));
-
+        const { title, secs } = await wikiPage(entry, ctx);
+        out.wikiTitle = title;
+        const acq = secs.filter((s) => isAcq(s) && !s.chain.some((t) => /historical|temporary|pop-?up/i.test(t)));
+        if (acq.length) out.acquisition = sectionHtml(acq);
+        const top = acq.find((s) => s.chain.length === 1);
+        out.note = top?.nodes.find((n) => n.tagName === 'P' && n.textContent.trim().length > 30)?.textContent.replace(/\s+/g, ' ').trim() || null;
         const idx = await namesFor(ctx);
-        status('Matching reward items…');
-        const rw = await rewardsFor(ctx);
-
-        // Kategorien zuerst (damit ihre Erfolge zusammenbleiben), dann einzelne Erfolge, dann Bauteile
-        const found = links.map((t, pos) => {
-          const keys = titleKeys(t);
-          const ck = keys.find((k) => idx.cat.has(k));
-          if (ck) return { pos, t, cat: idx.cat.get(ck) };
-          const ak = keys.find((k) => idx.ach.has(k));
-          if (ak) return { pos, t, ach: idx.ach.get(ak) };
-          const r = rewardMatch(rw, keys);
-          if (r) return { pos, t, reward: r };
-          return { pos, t };
-        });
-        for (const f of found) if (f.cat) addCategory(catById.get(f.cat), f.pos);
-        const direct = found.filter((f) => f.ach && place([f.ach]).length);
-        if (direct.length) groups.push({ kind: 'achievements', title: 'Achievements', ids: direct.map((f) => f.ach), pos: direct[0].pos });
-        for (const f of found) {
-          if (!f.reward) continue;
-          const ids = place(f.reward.achIds);
-          if (ids.length) groups.push({ kind: 'component', title: f.t, itemId: f.reward.itemId, ids, pos: f.pos });
-        }
-
-        // Legendäre: Bauteile ohne direkten Treffer auf ihrer eigenen Seite weiterverfolgen
-        if (entry.kind === 'legendary' || entry.kind === 'set') {
-          const cands = found.filter((f) => !f.cat && !f.ach && !f.reward && !/^(mystic forge|trading post|mystische schmiede|handelsposten)$/i.test(f.t))
-            .sort((x, y) => (GIFT.test(y.t) - GIFT.test(x.t)) || x.pos - y.pos)
-            .slice(0, 10);
-          if (cands.length) status(`Following ${cands.length} recipe components on the wiki…`);
-          const budget = { left: PAGE_BUDGET };
-          const res = await pool(cands, 4, (c) => crawlComponent(c.t, ctx, idx, rw, budget, 1));
-          cands.forEach((c, i) => {
-            const ids = place(res[i] || []);
-            if (ids.length) groups.push({ kind: 'component', title: c.t, ids, pos: c.pos, via: true });
-          });
+        const toIds = (titles) => [...new Set(titles.map((t) => titleKeys(t).map((k) => idx.ach.get(k)).find(Boolean)).filter(Boolean))];
+        for (const s of acq) {
+          const lists = s.nodes.flatMap((n) => (n.matches('ol, ul, table, dl') ? [n] : [...n.querySelectorAll('ol, ul, table, dl')]));
+          let ids = toIds(linksIn(lists));
+          if (!ids.length) ids = toIds(linksIn(s.nodes));
+          ids = place(ids);
+          if (ids.length) groups.push({ kind: 'section', title: s.chain[s.chain.length - 1], ids });
         }
       } catch (e) {
-        wikiError = e.message || String(e);
+        out.wikiError = e.message || String(e);
         console.warn('Sammlung (Wiki)', e);
       }
-
-      // API: Erfolge, die den Gegenstand (bzw. ein Teil des Sets) selbst als Belohnung geben
-      const own = entry.kind === 'set' ? entry.pieces.map((p) => ({ id: p.id, title: nameOf(p, ctx.lang) })) : entry.itemId ? [{ id: entry.itemId, title: name }] : [];
-      own.forEach((o, i) => {
-        const ids = place(rewarding(o.id));
-        if (ids.length) groups.push({ kind: 'component', title: o.title, itemId: o.id, ids, pos: 9000 + i });
-      });
-
-      fromWiki = groups.length > 0;
-      const nq = norm(name);
-      // Legendäre: „Name I/II/III“, „Name: …“ bzw. „Legendary …: Name“ gehören zum Weg
-      if (entry.kind === 'legendary' && nq.length >= 3) {
-        const strict = new RegExp(`^([a-z ]+: )?${escRe(nq)}( [ivx]+)?(:.*)?$`);
-        const ids = place([...ctx.ach.values()].filter((a) => ctx.catOf.has(a.id) && strict.test(norm(a.name))).map((a) => a.id));
-        if (ids.length) groups.push({ kind: 'achievements', title: 'Achievements', ids, pos: 11000 });
+    } else {
+      // Legendäre / Rüstungsset: Rezept-/Erwerbsbaum
+      const roots = entry.kind === 'set' ? entry.pieces.map((p) => p.id) : [entry.itemId];
+      try {
+        out.items = await itemTree(roots, ctx, status);
+        out.roots = roots;
+        for (const n of Object.values(out.items)) {
+          const ids = place([...(n.achIds || []), ...(n.reqAch ? [n.reqAch] : [])]);
+          if (ids.length) groups.push({ kind: 'component', title: n.name, itemId: n.id, ids });
+        }
+        // Sammlungen mit dem Namen der Legendären („HOPE I: Research“ … „HOPE IV: The Catalyst“): Precursor-Weg
+        const nq = norm(name);
+        if (entry.kind === 'legendary' && nq.length >= 3) {
+          const re = new RegExp(`^([a-z' ]+: )?${escRe(nq)}( [ivx]+)?(:.*)?$`);
+          const roman = (a) => ({ i: 1, ii: 2, iii: 3, iv: 4, v: 5, vi: 6 }[(re.exec(norm(a.name))?.[2] || '').trim()] || 0);
+          const ids = place([...ctx.ach.values()].filter((a) => ctx.catOf.has(a.id) && !periodic(a) && re.test(norm(a.name)))
+            .sort((x, y) => roman(x) - roman(y)).map((a) => a.id));
+          if (ids.length) groups.push({ kind: 'named', title: 'Collections', ids });
+        }
+      } catch (e) {
+        console.warn('Rezeptbaum', e);
+        out.treeError = e.message || String(e);
       }
-      // Nur wenn das Wiki nichts geliefert hat: Kategorien mit dem Namen (Wortanfang: „skyscale“ -> „Raising Skyscales“)
-      if (!groups.length && entry.kind === 'mount' && nq.length >= 3) {
-        const re = new RegExp(`(^|[^a-z0-9])${escRe(nq)}`);
-        ctx.categories.filter((c) => re.test(norm(c.name)) && catIds(c).length)
-          .sort((x, y) => (x.order ?? 0) - (y.order ?? 0))
-          .forEach((c, i) => addCategory(c, 10000 + i));
+      try {
+        status('Reading the wiki page…');
+        const { title, secs } = await wikiPage(entry, ctx);
+        out.wikiTitle = title;
+        const acq = secs.filter(isAcq);
+        if (acq.length) out.acquisition = sectionHtml(acq);
+      } catch (e) {
+        out.wikiError = e.message || String(e);
       }
     }
 
-    groups.sort((x, y) => x.pos - y.pos);
     // Voraussetzungen (rekursiv) in die Gruppe des Erfolgs, der sie braucht.
     // Kategorie: Vor-Erfolge aus anderen Kategorien als eigene Gruppe (zählen nicht zur Kategorie).
     const before = [];
@@ -485,12 +534,8 @@ const Collections = (() => {
       else g.ids = [...pre, ...g.ids];
     }
     if (before.length) groups.unshift({ kind: 'prereq', title: 'Needed first', ids: before, extra: true });
-
-    return {
-      v: VERSION, ts: Date.now(), key: entry.key, name, wikiTitle, wikiError, acquisition,
-      sequential: entry.kind === 'mount' && fromWiki, // Schrittfolge nur, wenn die Reihenfolge von der Wiki-Seite stammt
-      groups: groups.map(({ kind, title, catId, itemId, ids, extra, via }) => ({ kind, title, catId, itemId, ids, extra: !!extra, via: !!via })),
-    };
+    out.groups = groups.map(({ kind, title, catId, itemId, ids, extra }) => ({ kind, title, catId, itemId, ids, extra: !!extra }));
+    return out;
   }
 
   const memo = new Map();
