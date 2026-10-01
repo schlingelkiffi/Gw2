@@ -135,8 +135,36 @@ const Wiki = (() => {
     btn.textContent = code;
     return btn;
   }
+  // Spiel-Links des Wikis (<span class="gamelink" data-type="map" data-id="4044">, erst per Skript gefüllt)
+  // selbst in Chat-Codes umrechnen: Kartenpunkt = 0x04 + ID (4 Byte), Gegenstand = 0x02 + Anzahl + ID (3 Byte) + 0
+  function gameLinkCode(type, id) {
+    if (!(id > 0)) return null;
+    const le = (n, len) => Array.from({ length: len }, (_, i) => (n >>> (8 * i)) & 0xff);
+    const bytes = type === 'map' ? [4, ...le(id, 4)] : type === 'item' ? [2, 1, ...le(id, 3), 0] : null;
+    return bytes ? `[&${btoa(String.fromCharCode(...bytes))}]` : null;
+  }
+
   function markChatLinks(root) {
     const doc = root.ownerDocument;
+    root.querySelectorAll('span.gamelink[data-type][data-id]').forEach((sp) => {
+      const code = gameLinkCode(sp.dataset.type, +sp.dataset.id);
+      if (!code) return;
+      const btn = chatButton(doc, code);
+      // Art und Name aus Symbol und Link davor („Waypoint (map icon)“ + „Hullgarden Pier Waypoint“)
+      let name = '';
+      let kind = '';
+      for (let n = sp.previousElementSibling, k = 0; n && k < 4; n = n.previousElementSibling, k++) {
+        if (!name && n.tagName === 'A' && !n.querySelector('img')) name = n.textContent.trim();
+        const alt = n.querySelector?.('img')?.getAttribute('alt') || n.getAttribute?.('alt') || '';
+        if (alt) {
+          kind = /waypoint/i.test(alt) ? 'waypoint' : /point of interest|landmark/i.test(alt) ? 'landmark' : /vista/i.test(alt) ? 'vista' : '';
+          break;
+        }
+      }
+      if (kind) { btn.classList.add(`k-${kind}`); btn.dataset.kind = kind; }
+      if (name) btn.dataset.name = name;
+      sp.replaceWith(btn);
+    });
     root.querySelectorAll('input').forEach((inp) => {
       const v = (inp.getAttribute('value') || '').trim();
       if (/^\[&[A-Za-z0-9+/]+=*\]$/.test(v)) inp.replaceWith(chatButton(doc, v));

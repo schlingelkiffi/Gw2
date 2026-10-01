@@ -487,6 +487,8 @@ const Collections = (() => {
       try {
         out.items = await itemTree(roots, ctx, status);
         out.roots = roots;
+        // Kein Rezept/Händler für das Ziel gefunden (z. B. Wiki-Abfrage gescheitert): nicht dauerhaft speichern
+        if (roots.every((id) => (out.items[id]?.how || 'leaf') === 'leaf')) out.treeError = 'no recipe data';
         for (const n of Object.values(out.items)) {
           const ids = place([...(n.achIds || []), ...(n.reqAch ? [n.reqAch] : [])]);
           if (ids.length) groups.push({ kind: 'component', title: n.name, itemId: n.id, ids });
@@ -560,7 +562,7 @@ const Collections = (() => {
     }
     const res = await build(entry, ctx);
     memo.set(cacheKey(entry, ctx), res);
-    if (!res.wikiError) DB.set(cacheKey(entry, ctx), res); // ohne Wiki nur für diese Sitzung
+    if (!res.wikiError && !res.treeError) DB.set(cacheKey(entry, ctx), res); // unvollständig: nur für diese Sitzung
     return res;
   }
 

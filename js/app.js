@@ -1027,15 +1027,33 @@
 
     rewardsHtml(a).then((h) => { const r = body.querySelector('.t-rewards'); if (r) r.innerHTML = h; });
     if (bits.length && !inf.finished) {
-      bitNames(a, S.lang).then((names) => {
+      // Offene Schritte; mit Wiki-Zeile aufklappbar: Wegmarke (Chat-Code), Gebiet, Beschreibung, Map-/Vor-Ort-Bilder
+      Promise.all([bitNames(a, S.lang), wikiAchContent(a).catch(() => null), Geo.load(S.wikiLang).catch(() => null)]).then(([names, wiki]) => {
         const out = body.querySelector('.t-bits');
         if (!out) return;
         const doneCount = bits.filter((_, i) => inf.bitsDone.has(i)).length;
         const needed = inf.maxCount && inf.maxCount < bits.length ? inf.maxCount : bits.length;
-        const openBits = names.filter((_, i) => !inf.bitsDone.has(i));
+        const open = names.map((x, i) => ({ x, i })).filter(({ i }) => !inf.bitsDone.has(i));
+        const MAX = 30;
+        const rows = open.slice(0, MAX).map(({ x, i }) => {
+          const det = wiki ? stepDetails(wiki.content, a.id, i, x.label) : null;
+          const icon = x.icon ? `<img class="mini" src="${esc(x.icon)}" alt="">` : '';
+          const title = det?.title && norm(det.title).startsWith(norm(x.label)) ? det.title : x.label;
+          const name = `${icon}<span class="${x.rarity ? `r-${esc(x.rarity)}` : ''}">${esc(title)}</span>`;
+          if (!det) {
+            const place = x.type === 'Text' ? Geo.locate(x.label) : null;
+            return `<li class="tstep-plain">${name}${place ? waypointLine(place) : ''}</li>`;
+          }
+          return `<li class="tstep"><details><summary>${name}${det.area ? ` <span class="sub">· ${esc(det.area)}</span>` : ''}
+              ${det.chat ? chatBtn(det.chat) : det.needArea ? `<span class="area-chat" data-area="${esc(det.area)}"></span>` : ''}${det.hasImgs ? ' <span class="sub">🖼</span>' : ''}</summary>${det.html}</details></li>`;
+        });
         out.innerHTML = `<strong>Steps:</strong> ${S.account ? `${doneCount}/${needed} done` : `${needed}`}${needed < bits.length ? ` <span class="muted">(any ${needed} of ${bits.length})</span>` : ''}
-          <ul class="t-steps">${openBits.slice(0, 12).map((x) => `<li>${x.icon ? `<img class="mini" src="${esc(x.icon)}" alt="">` : ''}<span class="${x.rarity ? `r-${esc(x.rarity)}` : ''}">${esc(x.label)}</span></li>`).join('')}</ul>
-          ${openBits.length > 12 ? `<div class="muted">+ ${openBits.length - 12} more – see the run-through</div>` : ''}`;
+          ${rows.some((r) => r.includes('class="tstep"')) ? '<span class="muted"> – tap a step for waypoint, description and screenshots</span>' : ''}
+          <ul class="t-steps">${rows.join('')}</ul>
+          ${open.length > MAX ? `<div class="muted">+ ${open.length - MAX} more – see the run-through</div>` : ''}`;
+        tagChatKinds(out);
+        bindAnchors(out);
+        fillAreaWaypoints(out);
       });
     }
     const unlock = body.querySelector('.unlock-lines');
@@ -1253,6 +1271,70 @@
     // Zählt Erfolge der eigenen Kategorie: Plural-Wort bzw. Kategoriename in der Anforderung,
     // und die benötigte Anzahl passt zur Zahl der anderen Erfolge der Kategorie.
     return (META_RE.test(req) || (cat && req.includes(cat.name))) && needed > 1 && needed <= others;
+  }
+
+  // Wiki-Zeile zu einem Schritt: Sammlungs- und Walkthrough-Tabellen markieren jede Zeile mit
+  // data-id="achievement<ID>-bit<N>". Daraus: Wegmarke (Chat-Code), Gebiet, Beschreibung, Map-/Vor-Ort-Bilder.
+  function stepDetails(content, aid, i, label) {
+    const row = content?.querySelector(`tr[data-id="achievement${aid}-bit${i}"]`);
+    if (!row) return null;
+    const headRow = [...(row.closest('table')?.querySelectorAll('tr') || [])].find((tr) => tr.querySelector('th'));
+    const heads = headRow ? [...headRow.children].map((th) => th.textContent.trim()) : [];
+    const lines = [];
+    const imgs = [];
+    let chat = null;
+    let area = null;
+    let title = null;
+    [...row.children].forEach((td, k) => {
+      const h = heads[k] || '';
+      const text = td.textContent.replace(/\s+/g, ' ').trim();
+      if (k === 0 && /^\d*$/.test(text)) return; // laufende Nummer
+      if (/^(objective|collectible|item|step|task)s?$/i.test(h) || (!title && norm(text) === norm(label))) { title = title || text; return; }
+      if (/^(type|subtype)$/i.test(h)) return;
+      const pics = [...td.querySelectorAll('img')].filter((im) => (+im.getAttribute('width') || 0) >= 60);
+      pics.forEach((im) => imgs.push(`<figure class="step-img">${(im.closest('a') || im).outerHTML}${h ? `<figcaption>${esc(h)}</figcaption>` : ''}</figure>`));
+      if (pics.length && !text) return;
+      const btn = td.querySelector('button.chatlink');
+      if (btn && !chat) chat = btn.dataset.code;
+      if (!area && /^(area|zone|map|location|region)$/i.test(h) && !pics.length) area = td.querySelector('a[data-wiki]')?.dataset.wiki || text;
+      if (text) lines.push(`<div class="sl">${h ? `<span class="sk">${esc(h)}:</span> ` : ''}${td.innerHTML.trim()}</div>`);
+    });
+    // Keine Wegmarke in der Zeile? Dann die nächste zum genannten Gebiet aus den Kartendaten,
+    // sonst (unvollständige API-Karten wie Dragonfall) später aus der Wiki-Seite des Gebiets
+    const place = !chat && area ? Geo.locate(area) : null;
+    const needArea = !chat && !!area && !place;
+    const wp = place ? waypointLine(place) : needArea ? `<div class="wp area-wp" data-area="${esc(area)}"></div>` : '';
+    const html = `<div class="step-det wiki">${lines.join('')}${wp}${imgs.length ? `<div class="step-imgs">${imgs.join('')}</div>` : ''}</div>`;
+    return { html, chat: chat || (place && Geo.nearestWaypoint(place)?.chat) || null, area, title, needArea, hasImgs: imgs.length > 0 };
+  }
+
+  // Wegmarke (sonst Sehenswürdigkeit) eines Gebiets aus dessen Wiki-Seite
+  const areaWpCache = new Map();
+  function areaWaypoint(title) {
+    const k = `${S.wikiLang}|${title}`;
+    if (!areaWpCache.has(k)) {
+      areaWpCache.set(k, (async () => {
+        const res = await Wiki.page(S.wikiLang, title);
+        const btns = [...Wiki.sanitize(S.wikiLang, res.html).querySelectorAll('button.chatlink[data-kind]')]
+          .map((b) => ({ code: b.dataset.code, kind: b.dataset.kind, name: b.dataset.name || '' }));
+        return btns.find((x) => x.kind === 'waypoint') || btns.find((x) => x.kind === 'landmark') || btns[0] || null;
+      })().catch(() => null));
+    }
+    return areaWpCache.get(k);
+  }
+  async function fillAreaWaypoints(root) {
+    const els = [...root.querySelectorAll('[data-area]:not([data-filled])')];
+    const areas = [...new Set(els.map((e) => e.dataset.area))].slice(0, 15);
+    await pool(areas, 3, async (area) => {
+      const wp = await areaWaypoint(area);
+      root.querySelectorAll(`[data-area="${CSS.escape(area)}"]`).forEach((el) => {
+        el.dataset.filled = '1';
+        if (!wp) return;
+        const btn = chatBtn(wp.code, wp.kind || Geo.kindOfChat(wp.code));
+        el.innerHTML = el.classList.contains('area-chat') ? btn
+          : `${wp.kind === 'waypoint' ? 'Nearest waypoint' : 'Nearby'}: <strong>${esc(wp.name || area)}</strong> ${btn}`;
+      });
+    });
   }
 
   // Sucht im Wiki-Inhalt das kleinste Element (Tabellenzeile, Listeneintrag, …), das den Text enthält.
@@ -1692,27 +1774,32 @@
           ? `<a href="#/a/${linked.id}">${esc(n.label)}</a> ${stateBadge(linked)}`
           : `<span class="${n.rarity ? `r-${esc(n.rarity)}` : ''}">${esc(n.label)}</span>`;
         const typeName = { Item: 'Item', Skin: 'Skin', Minipet: 'Miniature' }[n.type] || '';
-        const head = `<div>${n.icon ? `<img class="mini" src="${esc(n.icon)}" alt="">` : ''}${label}
+        // Wiki-Zeile zum Schritt (Wegmarke, Gebiet, Beschreibung, Bilder) – exakt über die Schritt-Nummer
+        const det = !apiDone && content ? stepDetails(content, a.id, i, wikiLabel) : null;
+        // Gleichnamige Sammlungsstücke („Skyscale Scales“ ×21): die Wiki-Bezeichnung „… #1“ ist eindeutiger
+        const shown = det?.title && !linked && norm(det.title) !== norm(n.label) && norm(det.title).startsWith(norm(n.label)) ? det.title : null;
+        const head = `<div>${n.icon ? `<img class="mini" src="${esc(n.icon)}" alt="">` : ''}${shown ? `<span class="${n.rarity ? `r-${esc(n.rarity)}` : ''}">${esc(shown)}</span>` : label}
           ${typeName ? `<span class="sub">${typeName}</span>` : ''}
           ${n.type !== 'Text' ? `<a class="sub" href="${wikiRoute(S.wikiLang, wikiLabel)}">Wiki page</a>` : ''}</div>`;
         if (apiDone) { done.push(item(`<span class="check">✔</span><div class="grow">${head}</div>`, 'done')); return; }
-        const hint = content ? findWikiHint(content, wikiLabel) : null;
+        const hint = !det && content ? findWikiHint(content, wikiLabel) : null;
         const own = n.type === 'Item' ? S.inv?.get(n.id) : null;
         const price = n.type === 'Item' && !own ? priceCache.get(n.id) : null;
         const ownLine = own
           ? `<div class="own">✔ You already have <strong>${own.count}×</strong> (${esc([...own.where].join(', '))}). If it isn't counted yet: right-click the item → <em>Add to achievement</em>.</div>`
           : '';
         const priceLine = price?.buy ? `<div class="price">💰 ${coins(price.buy)} on the Trading Post <span class="sub">(buy now)</span></div>` : '';
-        const wpLine = n.type === 'Text' ? waypointLine(Geo.locate(wikiLabel)) : '';
-        const imgs = content && !(hint && hint.includes('<img')) ? findWikiImages(content, wikiLabel) : '';
+        const wpLine = !det && n.type === 'Text' ? waypointLine(Geo.locate(wikiLabel)) : '';
+        const imgs = !det && content && !(hint && hint.includes('<img')) ? findWikiImages(content, wikiLabel) : '';
         const mark = S.account ? '○' : `<input type="checkbox" class="manual" data-bit="${i}" ${manual.has(i) ? 'checked' : ''} title="Tick off manually (no API key)">`;
         todo.push(item(`<span class="check">${mark}</span><div class="grow">${head}
           ${ownLine}${priceLine}
           ${wpLine}
+          ${det ? det.html : ''}
           ${hint ? `<div class="hint wiki">${hint}</div>` : ''}
           ${imgs}
-          ${!hint && !own && n.type !== 'Text' ? `<button class="small acq" data-bit="${i}">How do I get this? (wiki)</button><div class="acq-out wiki"></div>` : ''}
-          ${!hint && !imgs && n.type === 'Text' && !linked && content ? (findWikiLink(content, wikiLabel)
+          ${!det && !hint && !own && n.type !== 'Text' ? `<button class="small acq" data-bit="${i}">How do I get this? (wiki)</button><div class="acq-out wiki"></div>` : ''}
+          ${!det && !hint && !imgs && n.type === 'Text' && !linked && content ? (findWikiLink(content, wikiLabel)
             ? `<a class="sub" style="margin-left:0" href="${wikiRoute(S.wikiLang, findWikiLink(content, wikiLabel))}">Wiki page: where is it? ›</a>`
             : '<div class="sub" style="margin-left:0">Not matched to a wiki entry automatically – check the full wiki guide below.</div>') : ''}
         </div>`, !S.account && manual.has(i) ? 'done' : ''));
@@ -1776,6 +1863,7 @@
       }
     }));
     bindAnchors(el);
+    fillAreaWaypoints(el);
   }
 
   const OPEN_SECTIONS = /walkthrough|guide|objective|collection|location|strategy|tips|ziel|lösung|anleitung|fundort|sammlung|tipps|strategie/i;

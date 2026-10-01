@@ -270,8 +270,8 @@ ul.tree details { margin: 0; }
 .tnode > details[open]:has(> .tbody:not(:empty)) > summary { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
 .tnode .icon, .titem .icon, .troot .icon { width: 30px; height: 30px; }
 .tnode .title, .titem .title { font-weight: 600; }
-.tnode summary .sub, .titem summary .sub { margin-left: 0; display: block; }
-.tnode summary .bar { max-width: 240px; margin: .25rem 0 0; }
+.tnode > details > summary .sub, .titem > details > summary .sub { margin-left: 0; display: block; }
+.tnode > details > summary .bar { max-width: 240px; margin: .25rem 0 0; }
 .st { width: 1.3rem; flex: none; text-align: center; font-weight: 700; }
 .s-done > .st, .s-done > details > summary > .st { color: var(--ok); }
 .s-progress > details > summary > .st { color: var(--accent-2); }
@@ -318,3 +318,15 @@ ul.t-steps li { margin: .1rem 0; }
 }
 .col-note { background: var(--panel); border-left: 3px solid var(--accent); padding: .45rem .8rem; border-radius: 0 6px 6px 0; margin: .4rem 0 .8rem; font-size: .92rem; }
 .titem .sub a { margin-left: .1rem; }
+
+/* Schritt-Details (Wiki-Zeile): Wegmarke, Gebiet, Beschreibung, Bilder */
+.step-det { margin: .3rem 0 .2rem; font-size: .9rem; }
+.step-det .sl { margin: .15rem 0; }
+.step-det .sk { color: var(--muted); font-size: .85em; }
+.step-det .wp { margin-top: .2rem; }
+ul.t-steps li.tstep { list-style: none; margin-left: -1.2rem; }
+li.tstep > details > summary { color: var(--text); padding: .15rem 0; }
+li.tstep > details > summary .sub { margin-left: .2rem; }
+li.tstep > details > summary .chatlink { margin-left: .3rem; }
+li.tstep > details[open] { background: var(--panel); border-radius: 6px; padding: .2rem .5rem .4rem; margin: .2rem 0; }
+.step-det .step-imgs { margin-top: .4rem; }
