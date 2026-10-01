@@ -3,6 +3,11 @@
 Ein Web-Tool für Guild-Wars-2-Erfolge, das komplett im Browser läuft. Oberfläche und Spieldaten sind auf Englisch; die Spielsprache kannst du unter *Settings* umstellen.
 
 - **Suche**: Du findest jeden Erfolg über Name, Beschreibung oder ID.
+- **Sammlungen als Baum**: Suchst du nach einem Reittier oder einer Legendären (z. B. „Skyscale“, „Endless Summer“, oder einfach „legendary“), steht oben ein Sammlungs-Eintrag mit Symbol. Ein Klick darauf zeigt alle nötigen Erfolge als Baum:
+  - gruppiert nach Erfolgskategorie bzw. Bauteil (z. B. „Gift of the Hylek“ ← „Radiance of the Sun God“), Voraussetzungen jeweils vor den Erfolgen, die sie brauchen,
+  - deinen Stand pro Erfolg (✔ erledigt, ◐ angefangen, ○ offen, 🔒 gesperrt), den Gesamtfortschritt und den nächsten sinnvollen Schritt,
+  - aufgeklappt die Voraussetzungen mit Stand, den Freischalt-Weg aus dem Wiki, die offenen Schritte und die Belohnung.
+  Auch Erfolgskategorien erscheinen als Sammlung, und jede Erfolgsseite verlinkt ihre Kategorie als Baum.
 - **Run-Through**: Für einen Erfolg siehst du
   - offene **Voraussetzungen** (rekursiv, in der richtigen Reihenfolge),
   - alle **Einzelschritte** (Objekte, Items, Skins, Minis) mit deinem Stand aus der API. Erledigte Schritte werden abgehakt, die übrigen kannst du manuell abhaken,
@@ -19,6 +24,7 @@ Ein Web-Tool für Guild-Wars-2-Erfolge, das komplett im Browser läuft. Oberflä
 - **Timers:** Weltbosse und Karten-Metas aller Erweiterungen, nach Erweiterung aufklappbar und nach Karte sortiert, mit Countdown in deiner Ortszeit, Chat-Code zum Kopieren und deinen offenen Erfolgen je Event. Daten: offizielle Wiki-Event-Timer (`Widget:Event timer/data.json`), sonst [gw2-api-event-timers](https://github.com/giovazz89/gw2-api-event-timers), sonst ein eingebauter Weltboss-Plan.
 - **Belohnungs-Filter:** In *Easy AP* nach Meisterschaftspunkt, Titel, Item oder Gold filtern.
 - **Timegates:** Tageslimits aus dem Wiki, Fortschritt heute und Countdown bis zum Tagesreset (00:00 UTC).
+- **Reittiere & Legendäre Waffenkammer:** Mit dem Key-Recht `unlocks` (für die Waffenkammer zusätzlich `inventories`) zeigen die Sammlungen, ob du das Reittier schon hast bzw. die Legendäre in deiner Waffenkammer liegt.
 
 ## Desktop-Programm (Windows/Linux)
 
@@ -79,7 +85,8 @@ Der Key bleibt in deinem Browser (localStorage) und wird nur an `api.guildwars2.
 | `js/api.js` | GW2-API (`/v2/achievements`, `/categories`, `/groups`, `/account/achievements`, Items/Skins/Minis) |
 | `js/wiki.js` | Wiki-Suche (per Spiel-ID über Semantic MediaWiki, sonst per Name), Parsen, HTML-Bereinigung |
 | `js/progress.js` | AP, Stufen, Fortschritt und Leichtigkeits-Score |
-| `js/app.js` | Oberfläche und Routing (`#/`, `#/a/<id>`, `#/easy`, `#/settings`) |
+| `js/collections.js` | Sammlungen: Katalog (`/v2/mounts`, `/v2/legendaryarmory`) und die zugehörigen Erfolge (Wiki-Seite: verlinkte Kategorien, Erfolge und Bauteile, die ein Erfolg als Belohnung gibt; dazu API-Voraussetzungen) |
+| `js/app.js` | Oberfläche und Routing (`#/`, `#/a/<id>`, `#/c/<sammlung>`, `#/easy`, `#/timers`, `#/settings`) |
 | `electron/main.js` | Desktop-Hülle (Fenster, externe Links im Browser, Menü) |
 | `js/db.js` | IndexedDB-Cache (die Erfolgsdaten werden 7 Tage gecacht) |
 

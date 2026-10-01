@@ -1,7 +1,10 @@
 // Zugriff auf das offizielle Guild Wars 2 Wiki (MediaWiki-API mit CORS über origin=*).
 const Wiki = (() => {
   const BASES = { en: 'https://wiki.guildwars2.com', de: 'https://wiki-de.guildwars2.com' };
-  const SUFFIX = { en: { Achievement: 'achievement', Item: 'item' }, de: { Achievement: 'Erfolg', Item: 'Gegenstand' } };
+  const SUFFIX = {
+    en: { Achievement: 'achievement', Item: 'item', Mount: 'mount' },
+    de: { Achievement: 'Erfolg', Item: 'Gegenstand', Mount: 'Reittier' },
+  };
   const ACQ_RE = /acquisition|obtain|location|sold by|vendor|recipe|erwerb|fundort|händler|herstellung|rezept/i;
 
   const base = (lang) => BASES[lang] || BASES.en;
@@ -58,9 +61,14 @@ const Wiki = (() => {
 
   // Reihenfolge: eigene Seite mit genau diesem Namen, dann Spiel-ID (oft eine Kategorieseite,
   // auf der der Erfolg nur ein Abschnitt ist), zuletzt Volltextsuche.
-  async function findPage(lang, { id, name, context }) {
+  // preferId: Spiel-ID zuerst (Items: gleichnamige Seiten sind oft Begriffsklärungen).
+  async function findPage(lang, { id, name, context, preferId = false }) {
+    if (preferId && id != null) {
+      const byId = await findByGameId(lang, id, context);
+      if (byId) return byId;
+    }
     return (await findByName(lang, name, context, false))
-      || (id != null && (await findByGameId(lang, id, context)))
+      || (!preferId && id != null && (await findByGameId(lang, id, context)))
       || (await findByName(lang, name, context));
   }
 

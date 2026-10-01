@@ -50,6 +50,7 @@ footer { max-width: 1100px; margin: 2rem auto; padding: 1rem; color: var(--muted
   background: var(--panel-2); border: 1px solid var(--line);
 }
 .pill.ok { border-color: var(--ok); color: var(--ok); }
+.pill[hidden] { display: none; }
 .pill.warn { border-color: var(--warn); color: var(--warn); }
 
 button, .btn, select, input[type=search], input[type=password] {
@@ -236,4 +237,67 @@ button.chatlink.copied { background: var(--ok); color: #0c1a0c; border-style: so
   main { padding: .8rem; }
   table.easy td:nth-child(1), table.easy th:nth-child(1) { display: none; }
   .ach-stat { width: 100%; }
+}
+
+/* Sammlungen: Suchtreffer */
+h3.res-head { font-size: .85rem; text-transform: uppercase; letter-spacing: .06em; color: var(--muted); margin: 1rem 0 0; }
+.list.collections { margin-top: .3rem; }
+.list.collections .row { border: 1px solid var(--line); background: var(--panel); margin-bottom: .35rem; }
+.list.collections .row:hover { border-color: var(--accent); }
+.pill.kind { font-size: .75rem; font-weight: 500; vertical-align: 2px; margin-left: .3rem; }
+.pill.k-mount { border-color: var(--accent); color: var(--accent-2); }
+.pill.k-legendary { border-color: #c78eff; color: #c78eff; }
+.col-link { margin: .1rem 0 .4rem; }
+
+/* Sammlungen: Baum */
+.col-head .focus-status { margin-top: .3rem; }
+.next-up { margin: .5rem 0 0; font-weight: 600; }
+ul.tree { list-style: none; margin: .2rem 0 .2rem .7rem; padding-left: 1.1rem; border-left: 2px solid var(--line); }
+ul.tree.root { margin-left: .3rem; }
+ul.tree > li { position: relative; margin: .35rem 0; }
+ul.tree > li::before { content: ""; position: absolute; left: -1.1rem; top: 1.15rem; width: .9rem; border-top: 2px solid var(--line); }
+ul.tree details { margin: 0; }
+.tgroup > details > summary { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; padding: .35rem .2rem; color: var(--text); font-size: 1.05rem; }
+.tgroup > details > summary .sub { margin-left: 0; }
+.tgroup.all-done > details > summary strong { color: var(--ok); }
+.t-ico { width: 1.4rem; text-align: center; }
+.tnode > details > summary {
+  display: flex; gap: .55rem; align-items: center; padding: .4rem .6rem; color: var(--text);
+  border: 1px solid var(--line); border-radius: 8px; background: var(--panel); list-style: none;
+}
+.tnode > details > summary::-webkit-details-marker { display: none; }
+.tnode > details > summary:hover { border-color: var(--accent); }
+.tnode > details[open] > summary { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
+.tnode .icon { width: 30px; height: 30px; }
+.tnode .title { font-weight: 600; }
+.tnode summary .sub { margin-left: 0; display: block; }
+.tnode summary .bar { max-width: 240px; margin: .25rem 0 0; }
+.tnode .st { width: 1.3rem; flex: none; text-align: center; font-weight: 700; }
+.tnode .num { flex: none; min-width: 1.5rem; height: 1.5rem; line-height: 1.5rem; text-align: center; border-radius: 999px; background: var(--panel-2); border: 1px solid var(--line); font-size: .8rem; color: var(--muted); }
+.tnode.s-done .st { color: var(--ok); }
+.tnode.s-done > details > summary { opacity: .6; }
+.tnode.s-progress .st { color: var(--accent-2); }
+.tnode.s-locked > details > summary { border-style: dashed; }
+.tnode.s-locked .title { color: var(--muted); }
+.tnode.current > details > summary { border-color: var(--accent); background: #d9a44118; }
+.tnode.flash > details > summary { box-shadow: 0 0 0 2px var(--accent-2); }
+.tbody { padding: .6rem .9rem .8rem; border: 1px solid var(--line); border-top: none; border-radius: 0 0 8px 8px; background: var(--panel-2); }
+.tbody .req { margin: 0 0 .3rem; }
+.tbody .desc { font-style: italic; color: #cfc9b8; margin: 0 0 .5rem; font-size: .9rem; }
+.t-sec { margin: .5rem 0; }
+.t-sec .pre { margin: .25rem 0 .25rem .4rem; }
+.t-sec .pre .sub { margin-left: 1.2rem; display: block; }
+.t-sec .pre.done { opacity: .6; }
+.t-unlock { border-left: 3px solid var(--warn); padding-left: .6rem; }
+.t-unlock .unlock-lines > div { margin: .2rem 0; }
+ul.t-steps { margin: .3rem 0; padding-left: 1.2rem; }
+ul.t-steps li { margin: .1rem 0; }
+.t-actions { display: flex; gap: .5rem; align-items: center; margin-top: .6rem; flex-wrap: wrap; }
+.t-actions .btn { font-size: .85rem; padding: .25rem .7rem; }
+.t-actions button.small { margin-top: 0; }
+#col-acq-body { margin-top: .3rem; }
+@media (max-width: 640px) {
+  ul.tree { margin-left: .3rem; padding-left: .7rem; }
+  ul.tree > li::before { left: -.7rem; width: .55rem; }
+  .tnode .num { display: none; }
 }

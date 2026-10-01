@@ -55,8 +55,12 @@
         if (!S.catOf.has(id)) S.catOf.set(id, c);
       }
     }
+    S.categories = data.categories;
+    S.catById = cats;
+    S.catByName = new Map(data.categories.map((c) => [norm(c.name), c]));
     S.groups = [...data.groups].sort((a, b) => a.order - b.order);
     for (const g of S.groups) for (const cid of g.categories || []) if (cats.has(cid)) S.groupOf.set(cid, g);
+    Collections.reset();
     S.byName = new Map();
     for (const a of data.achievements) {
       const k = norm(a.name);
@@ -75,6 +79,8 @@
     S.progress.clear();
     S.account = null;
     S.easyRows = null;
+    S.unlocks = null;
+    S.unlockPromise = null;
     if (!S.key) { renderAccount(); return; }
     status('Loading account progress…');
     try {
@@ -85,6 +91,7 @@
       S.progressTs = new Date();
       recordDaily();
       S.invPromise = loadInventory().catch((e) => console.warn('Inventar', e));
+      S.unlockPromise = Collections.accountUnlocks(S.key, S.perms).then((u) => (S.unlocks = u)).catch(() => null);
     } catch (e) {
       toast(`API key error: ${e.message}`);
     }
@@ -331,13 +338,16 @@
 
   function renderResults() {
     const el = $('#results');
+    if (!el) return; // Suche verlassen, bevor die verzögerte Eingabe ankam
     const q = norm(S.query);
     if (q.length < 2) {
       el.innerHTML = `${progressCardHtml()}${S.account ? trackedHtml() : ''}<p class="muted">${S.ach.size.toLocaleString('en-US')} achievements loaded. Type at least 2 characters.
+        <br>🌳 Search for a mount or a legendary (e.g. “Skyscale”, “Endless Summer”, or just “legendary”) to see every achievement on the way as a tree.
         ${S.account ? '' : '<br>Tip: with an API key you see your progress and the <a href="#/easy">Easy AP finder</a>.'}</p>`;
       drawSpark();
       return;
     }
+    ensureCollections();
     const idQuery = /^\d+$/.test(q) ? +q : null;
     const scored = [];
     for (const a of S.ach.values()) {
@@ -354,14 +364,385 @@
     }
     scored.sort((x, y) => y[0] - x[0] || x[1].name.localeCompare(y[1].name));
     const top = scored.slice(0, 60);
-    el.innerHTML = top.length ? `<ul class="list">${top.map(([, a]) => `
+    const cols = collectionResults(S.query);
+    el.innerHTML = cols + (top.length ? `${cols ? '<h3 class="res-head">Achievements</h3>' : ''}<ul class="list">${top.map(([, a]) => `
       <li><a class="row" href="#/a/${a.id}">
         ${achIcon(a)}
         <div class="grow"><div class="title">${esc(a.name)}</div><div class="sub">${catPath(a)}</div></div>
         ${stateBadge(a)}
       </a></li>`).join('')}</ul>
       ${scored.length > top.length ? `<p class="muted">… and ${scored.length - top.length} more. Refine your search.</p>` : ''}`
-      : '<p class="muted">No results.</p>';
+      : cols ? '' : '<p class="muted">No results.</p>');
+    fillCollectionProgress(el);
+  }
+
+  // ---------- Sammlungen (Reittiere, Legendäre, Kategorien) ----------
+  const colLangs = () => [S.lang, 'en', S.wikiLang];
+  const loadCollections = () => Collections.loadCatalog(colLangs()).catch((e) => { console.warn('Sammlungen', e); return []; });
+  let colLoadKey = null;
+  // Katalog im Hintergrund laden; danach die Suchergebnisse mit den Sammlungen neu zeichnen
+  function ensureCollections() {
+    const k = colLangs().join(',');
+    if (colLoadKey === k) return;
+    colLoadKey = k;
+    loadCollections().then(() => { if ($('#results') && norm(S.query).length >= 3) renderResults(); });
+  }
+
+  function colCtx(onStatus) {
+    return {
+      lang: S.lang, wikiLang: S.wikiLang, ach: S.ach, categories: S.categories, catOf: S.catOf, onStatus,
+      loadStatic: async (lang) => { const d = await GW2.loadStatic(lang, { onProgress: status }); status(null); return d; },
+    };
+  }
+
+  function categoryEntry(id) {
+    const cat = S.catById?.get(id);
+    if (!cat) return null;
+    return { key: `cat:${id}`, kind: 'category', catId: id, names: { [S.lang]: cat.name }, icon: cat.icon, sub: S.groupOf.get(id)?.name || 'Achievement category' };
+  }
+  const entryFor = (key) => (key.startsWith('cat:') ? categoryEntry(+key.slice(4)) : Collections.entry(key));
+
+  const COL_KIND = { mount: ['🐉', 'Mount'], legendary: ['✦', 'Legendary'], category: ['📁', 'Category'] };
+  function kindPill(e) {
+    const [ic, label] = COL_KIND[e.kind];
+    return `<span class="pill kind k-${e.kind}">${ic} ${esc(e.kind === 'legendary' ? e.sub : label)}</span>`;
+  }
+
+  function unlockedPill(e) {
+    const u = S.unlocks;
+    if (e.kind === 'mount' && u?.mounts) return u.mounts.has(e.mountId) ? '<span class="pill ok">✔ unlocked</span>' : '<span class="pill">not unlocked yet</span>';
+    if (e.kind === 'legendary' && u?.legendary) {
+      const n = u.legendary.get(e.itemId);
+      return n ? `<span class="pill ok">✔ in your armory${n > 1 ? ` (${n}×)` : ''}</span>` : '';
+    }
+    return '';
+  }
+
+  const wordStart = (n, q) => n.startsWith(q) || n.includes(` ${q}`);
+  function collectionResults(query) {
+    const q = norm(query);
+    if (q.length < 3) return '';
+    const entries = Collections.match(query);
+    const cats = (S.categories || [])
+      .filter((c) => categoryIds(c).length >= 2 && wordStart(norm(c.name), q))
+      .sort((x, y) => (x.order ?? 0) - (y.order ?? 0))
+      .slice(0, 6)
+      .map((c) => categoryEntry(c.id));
+    const shown = [...entries.slice(0, 12), ...cats];
+    if (!shown.length) return '';
+    const rows = shown.map((e) => {
+      const sub = e.kind === 'category' ? `${esc(e.sub)} · ${categoryIds(S.catById.get(e.catId)).length} achievements`
+        : e.kind === 'mount' ? 'Every achievement on the way to this mount' : 'Every achievement needed for this legendary';
+      return `<li><a class="row" href="#/c/${encodeURIComponent(e.key)}">
+        ${e.icon ? `<img class="icon" src="${esc(e.icon)}" alt="" loading="lazy">` : '<span class="icon ph"></span>'}
+        <div class="grow"><div class="title">${esc(Collections.nameOf(e, S.lang))} ${kindPill(e)}</div><div class="sub">🌳 ${sub}</div></div>
+        ${unlockedPill(e)}<span class="pill" data-colprog="${esc(e.key)}" hidden></span>
+      </a></li>`;
+    });
+    return `<h3 class="res-head">🌳 Collections</h3><ul class="list collections">${rows.join('')}</ul>
+      ${entries.length > 12 ? `<p class="muted">… and ${entries.length - 12} more collections. Refine your search.</p>` : ''}`;
+  }
+
+  // Erledigt/gesamt einer Sammlung (ohne die eingeklappten „verwandten“ Gruppen)
+  function colStats(res) {
+    const ids = [...new Set(res.groups.filter((g) => !g.related && !g.extra).flatMap((g) => g.ids))];
+    let done = 0, ap = 0, apMax = 0;
+    for (const id of ids) {
+      const a = S.ach.get(id);
+      if (!a) continue;
+      const inf = Progress.info(a, S.progress.get(id));
+      if (inf.finished) done++;
+      ap += inf.earned;
+      apMax += isFinite(inf.possible) ? inf.possible : inf.earned;
+    }
+    return { done, total: ids.length, ap, apMax };
+  }
+
+  // Fortschritt bekannter Sammlungen in den Suchtreffern nachtragen (nur wenn schon einmal aufgebaut)
+  function fillCollectionProgress(root) {
+    if (!S.account) return;
+    root.querySelectorAll('[data-colprog]').forEach(async (pill) => {
+      const e = entryFor(pill.dataset.colprog);
+      if (!e) return;
+      const res = e.kind === 'category' ? await Collections.resolve(e, colCtx()) : await Collections.cached(e, colCtx());
+      if (!res || !pill.isConnected) return;
+      const st = colStats(res);
+      if (!st.total) return;
+      pill.textContent = `${st.done}/${st.total} done`;
+      pill.classList.toggle('ok', st.done === st.total);
+      pill.hidden = false;
+    });
+  }
+
+  // Merkt sich, zu welcher Sammlung ein Erfolg gehört (für den Link auf der Erfolgsseite)
+  function rememberMembers(entry, res) {
+    if (entry.kind === 'category') return;
+    const m = Store.get('colMembers', {});
+    const name = Collections.nameOf(entry, S.lang);
+    for (const g of res.groups) if (!g.related) for (const id of g.ids) m[id] = [entry.key, name];
+    Store.set('colMembers', m);
+  }
+  function memberLink(a) {
+    const m = Store.get('colMembers', {})[a.id];
+    return m ? `<p class="col-link"><a href="#/c/${encodeURIComponent(m[0])}">🌳 Part of the ${esc(m[1])} collection – see the whole chain ›</a></p>` : '';
+  }
+
+  const openPrereqs = (a) => (a.prerequisites || []).map((id) => S.ach.get(id))
+    .filter((pa) => pa && !Progress.info(pa, S.progress.get(pa.id)).finished);
+
+  // done | progress | open | locked – ohne API-Key: unknown
+  function nodeState(a) {
+    if (!a || !S.account) return 'unknown';
+    const inf = Progress.info(a, S.progress.get(a.id));
+    if (inf.finished || (inf.repeatable && inf.done)) return 'done';
+    if (inf.needsUnlock || openPrereqs(a).length) return 'locked';
+    return inf.current > 0 ? 'progress' : 'open';
+  }
+
+  // Voraussetzungen vor den Erfolgen, die sie brauchen; sonst Reihenfolge wie gefunden (Wiki-Reihenfolge)
+  function topoOrder(ids) {
+    const set = new Set(ids);
+    const deps = new Map(ids.map((id) => [id, (S.ach.get(id)?.prerequisites || []).filter((p) => set.has(p) && p !== id)]));
+    const out = [];
+    const done = new Set();
+    while (out.length < ids.length) {
+      const next = ids.find((id) => !done.has(id) && deps.get(id).every((p) => done.has(p))) ?? ids.find((id) => !done.has(id));
+      done.add(next);
+      out.push(next);
+    }
+    return out;
+  }
+
+  const truncate = (s, n) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
+  const ST_ICON = { done: '✔', progress: '◐', open: '○', locked: '🔒', unknown: '○' };
+
+  function nodeHtml(a, state, isNext, num) {
+    const inf = Progress.info(a, S.progress.get(a.id));
+    let line;
+    if (state === 'done') line = 'Completed';
+    else if (state === 'locked') {
+      const open = openPrereqs(a);
+      line = open.length ? `🔒 Requires: ${open.map((x) => x.name).join(', ')}` : `🔒 ${stripTags(a.locked_text) || 'Locked – expand to see how to unlock it'}`;
+    } else if (state === 'unknown') line = requirementOf(a);
+    else line = nextStepText(a, inf);
+    return `<li class="tnode s-${state}${isNext ? ' current' : ''}" id="node-${a.id}" data-id="${a.id}"><details${isNext ? ' open' : ''}>
+      <summary><span class="st">${ST_ICON[state]}</span>${num ? `<span class="num">${num}</span>` : ''}${achIcon(a)}
+        <div class="grow"><div class="title">${esc(a.name)}${isNext ? ' <span class="pill warn">next up</span>' : ''}</div>
+          <div class="sub">${esc(truncate(line.replace(/\s+/g, ' '), 180))}</div>
+          ${state === 'progress' && inf.maxCount > 1 ? bar(inf.frac) : ''}</div>
+        ${stateBadge(a)}</summary>
+      <div class="tbody"><p class="muted">Loading…</p></div></details></li>`;
+  }
+
+  const GROUP_ICON = { category: '📁', achievements: '🏆', component: '🎁', related: '🔎', prereq: '🔗' };
+  function groupHtml(g, ids, next, counter) {
+    const states = ids.map((id) => nodeState(S.ach.get(id)));
+    const done = states.filter((s) => s === 'done').length;
+    const title = g.kind === 'achievements' ? 'Achievements' : g.kind === 'related' ? `More achievements mentioning “${g.title}”` : g.title;
+    const sub = g.kind === 'component' ? (g.via ? 'part of the recipe – comes from these achievements' : 'reward from these achievements')
+      : { category: 'achievement category', prereq: 'prerequisites from other categories' }[g.kind] || '';
+    const open = !g.related && (!S.account || done < ids.length);
+    return `<li class="tgroup${S.account && done === ids.length ? ' all-done' : ''}"><details${open ? ' open' : ''}><summary>
+        <span class="t-ico">${GROUP_ICON[g.kind] || '📁'}</span><strong>${esc(title)}</strong>
+        <span class="pill${S.account && done === ids.length ? ' ok' : ''}">${S.account ? `${done}/${ids.length}` : ids.length}</span>
+        ${sub ? `<span class="sub">${sub}</span>` : ''}</summary>
+      <ul class="tree">${ids.map((id, i) => nodeHtml(S.ach.get(id), states[i], id === next, g.related ? null : counter())).join('')}</ul>
+    </details></li>`;
+  }
+
+  async function showCollection(key, force = false) {
+    setNav(null);
+    const token = ++S.viewToken;
+    let entry = entryFor(key);
+    if (!entry && !key.startsWith('cat:')) {
+      view.innerHTML = '<p class="muted">Loading collections…</p>';
+      await loadCollections();
+      if (token !== S.viewToken) return;
+      entry = entryFor(key);
+    }
+    if (!entry) { view.innerHTML = '<p class="muted">Collection not found. <a href="#/">Back to search</a></p>'; return; }
+    const name = Collections.nameOf(entry, S.lang);
+    view.innerHTML = `
+      <p><a href="javascript:history.back()" class="link">← Back</a></p>
+      <header class="focus-head col-head">
+        ${entry.icon ? `<img class="icon big" src="${esc(entry.icon)}" alt="">` : '<span class="icon big ph"></span>'}
+        <div class="grow">
+          <div class="sub">${kindPill(entry)}${entry.kind === 'category' ? ` ${esc(entry.sub)}` : ''}</div>
+          <h1>${esc(name)}</h1>
+          <div id="col-summary"><p class="muted">Collecting the achievements…</p></div>
+        </div>
+      </header>
+      <section id="col-tree"><p class="muted" id="col-status">Loading…</p></section>
+      <details id="col-acq" class="box" hidden><summary>📖 How to get it (wiki)</summary><div class="wiki" id="col-acq-body"></div></details>
+      <p class="muted" id="col-foot"></p>`;
+    const onStatus = (t) => { if (token === S.viewToken && $('#col-status')) $('#col-status').textContent = t; };
+    let res;
+    try {
+      res = await Collections.resolve(entry, colCtx(onStatus), { force });
+      await S.unlockPromise;
+    } catch (e) {
+      if (token === S.viewToken) $('#col-tree').innerHTML = `<p class="err">Could not build the collection: ${esc(e.message)}</p>`;
+      return;
+    }
+    if (token !== S.viewToken) return;
+    renderCollection(entry, res);
+  }
+
+  function renderCollection(entry, res) {
+    S.colKey = entry.key;
+    rememberMembers(entry, res);
+    const main = res.groups.filter((g) => !g.related).map((g) => ({ g, ids: topoOrder(g.ids) }));
+    const rel = res.groups.filter((g) => g.related).map((g) => ({ g, ids: topoOrder(g.ids) }));
+    const flat = main.flatMap((x) => x.ids);
+    const next = S.account ? flat.find((id) => ['progress', 'open'].includes(nodeState(S.ach.get(id)))) : null;
+    const st = colStats(res);
+
+    const nextA = next && S.ach.get(next);
+    $('#col-summary').innerHTML = S.account
+      ? `<div class="focus-status">${bar(st.total ? st.done / st.total : 0)}
+          <span>${st.done} / ${st.total} achievements done</span>
+          <span class="pill">${st.ap}/${st.apMax} AP</span> ${unlockedPill(entry)}</div>
+        ${nextA ? `<p class="next-up">▶ Next up: <a href="#" data-goto="${next}">${esc(nextA.name)}</a></p>`
+          : st.total && st.done === st.total ? '<p class="ok-text">✔ All achievements of this collection are done.</p>'
+            : st.total ? '<p class="muted">Everything left is still locked – expand a 🔒 step to see how to unlock it.</p>' : ''}`
+      : `<div class="focus-status"><span class="pill">${st.total} achievements</span>
+          <span class="muted"><a href="#/settings">Add an API key</a> to see where you stand.</span></div>`;
+
+    let n = 0;
+    const counter = () => ++n;
+    const tree = $('#col-tree');
+    tree.innerHTML = flat.length
+      ? `<h2>Achievements on the way</h2><ul class="tree root">${main.map(({ g, ids }) => groupHtml(g, ids, next, counter)).join('')}</ul>`
+      : `<h2>Achievements on the way</h2><p class="muted">No achievements found for this collection.
+          ${res.wikiError ? `The wiki could not be read (${esc(res.wikiError)}).` : 'It is probably unlocked through the story, crafting or a vendor – see “How to get it” below.'}</p>`;
+    if (rel.length) {
+      tree.insertAdjacentHTML('beforeend', `<h2>More related</h2><ul class="tree root">${rel.map(({ g, ids }) => groupHtml(g, ids, null, counter)).join('')}</ul>`);
+    }
+
+    const acq = $('#col-acq');
+    if (res.acquisition) {
+      acq.hidden = false;
+      acq.open = !flat.length;
+      $('#col-acq-body').replaceChildren(Wiki.sanitize(S.wikiLang, res.acquisition)); // Cache-Inhalt erneut bereinigen
+      bindAnchors(acq);
+      Geo.load(S.wikiLang).then(() => tagChatKinds(acq)).catch(() => tagChatKinds(acq));
+    }
+    $('#col-foot').innerHTML = entry.kind === 'category'
+      ? 'Source: GW2 API (achievement category and prerequisites).'
+      : `${res.wikiError && flat.length ? `⚠ The wiki could not be read (${esc(res.wikiError)}) – this list comes from the GW2 API only and may be incomplete.<br>` : ''}
+        Source: ${res.wikiTitle ? `wiki page <a href="${wikiRoute(S.wikiLang, res.wikiTitle)}">${esc(res.wikiTitle)}</a>, ` : ''}GW2 API rewards and prerequisites
+        · built ${new Date(res.ts).toLocaleDateString()} · <button class="link" id="col-rebuild">↻ rebuild</button>`;
+    const rebuild = $('#col-rebuild');
+    if (rebuild) rebuild.onclick = () => showCollection(entry.key, true);
+
+    tree.addEventListener('toggle', (e) => {
+      const li = e.target.parentElement;
+      if (e.target.open && li?.classList.contains('tnode')) fillNode(li);
+    }, true);
+    tree.querySelectorAll('.tnode.current').forEach(fillNode);
+    prefetchUnlocks(tree);
+  }
+
+  // Gesperrte Schritte ohne offene Voraussetzung: Freischalt-Hinweis aus dem Wiki gleich in der Zeile zeigen
+  async function prefetchUnlocks(tree) {
+    const token = S.viewToken;
+    const lis = [...tree.querySelectorAll('.tnode.s-locked')].filter((li) => !openPrereqs(S.ach.get(+li.dataset.id)).length).slice(0, 8);
+    await pool(lis, 2, async (li) => {
+      const a = S.ach.get(+li.dataset.id);
+      const uh = await loadUnlockHint(a).catch(() => null);
+      if (token !== S.viewToken || stripTags(a.locked_text) || !uh?.text) return;
+      const sub = li.querySelector('summary .sub');
+      if (sub) sub.textContent = `🔒 ${truncate(uh.text.replace(/\s+/g, ' '), 180)}`;
+    });
+  }
+
+  async function pool(items, n, fn) {
+    let next = 0;
+    await Promise.all(Array.from({ length: Math.min(n, items.length) }, async () => {
+      while (next < items.length) await fn(items[next++]).catch(() => null);
+    }));
+  }
+
+  function prereqLine(pa) {
+    const done = Progress.info(pa, S.progress.get(pa.id)).finished;
+    const inTree = document.getElementById(`node-${pa.id}`);
+    return `<div class="pre${done ? ' done' : ''}">${S.account ? (done ? '✔' : '○') : '•'} <a href="#/a/${pa.id}">${esc(pa.name)}</a> ${stateBadge(pa)}
+      ${inTree ? `<a href="#" class="sub" data-goto="${pa.id}">↑ show in this tree</a>` : ''}
+      ${!done && requirementOf(pa) ? `<div class="sub">${esc(requirementOf(pa))}</div>` : ''}</div>`;
+  }
+
+  // Inhalt eines aufgeklappten Knotens: Anforderung, Voraussetzungen, Freischalt-Weg, offene Schritte, Belohnung
+  async function fillNode(li) {
+    if (li.dataset.filled) return;
+    li.dataset.filled = '1';
+    const a = S.ach.get(+li.dataset.id);
+    const body = li.querySelector('.tbody');
+    if (!a || !body) return;
+    const inf = Progress.info(a, S.progress.get(a.id));
+    const state = nodeState(a);
+    const bits = a.bits || [];
+    const pre = (a.prerequisites || []).map((id) => S.ach.get(id)).filter(Boolean);
+    const lockedish = state === 'locked' || (state === 'unknown' && ((a.flags || []).includes('RequiresUnlock') || pre.length));
+    const parts = [];
+    const req = requirementOf(a);
+    if (req) parts.push(`<p class="req">${esc(req)}</p>`);
+    if (a.description) parts.push(`<p class="desc">${esc(stripTags(a.description))}</p>`);
+    if (pre.length) parts.push(`<div class="t-sec"><strong>Prerequisite${pre.length > 1 ? 's' : ''}:</strong>${pre.map(prereqLine).join('')}</div>`);
+    if (lockedish && ((a.flags || []).includes('RequiresUnlock') || inf.needsUnlock)) {
+      parts.push(`<div class="t-sec t-unlock"><strong>🔒 How to unlock it:</strong><div class="unlock-lines">${unlockLines(a).map((l) => `<div>${l}</div>`).join('')}
+        <div class="muted wait">Checking the wiki…</div></div></div>`);
+    }
+    if (bits.length && !inf.finished) parts.push('<div class="t-sec t-bits"><span class="muted">Loading steps…</span></div>');
+    if (isMeta(a)) {
+      const cat = S.catOf.get(a.id);
+      const others = categoryIds(cat).filter((id) => id !== a.id).map((id) => S.ach.get(id)).filter(Boolean);
+      const open = others.filter((o) => !Progress.info(o, S.progress.get(o.id)).finished);
+      parts.push(`<div class="t-sec"><strong>Counts achievements in “${esc(cat.name)}”</strong>
+        ${S.account ? `<span class="pill">${inf.current}/${inf.maxCount} done</span>` : ''}
+        <a class="sub" href="#/c/${encodeURIComponent(`cat:${cat.id}`)}">all of them as a tree ›</a>
+        <ul class="t-steps">${open.slice(0, 25).map((o) => `<li><a href="#/a/${o.id}">${esc(o.name)}</a> ${stateBadge(o)}</li>`).join('')}</ul>
+        ${open.length > 25 ? `<div class="muted">+ ${open.length - 25} more</div>` : ''}</div>`);
+    }
+    parts.push('<div class="t-rewards"></div>');
+    parts.push(`<div class="t-actions"><a class="btn" href="#/a/${a.id}">Open run-through ›</a>
+      <button class="small watch-t">${isWatched(a.id) ? '★ Tracked' : '☆ Track'}</button></div>`);
+    body.innerHTML = parts.join('');
+    body.querySelector('.watch-t').onclick = (e) => { e.target.textContent = toggleWatch(a.id) ? '★ Tracked' : '☆ Track'; };
+
+    rewardsHtml(a).then((h) => { const r = body.querySelector('.t-rewards'); if (r) r.innerHTML = h; });
+    if (bits.length && !inf.finished) {
+      bitNames(a, S.lang).then((names) => {
+        const out = body.querySelector('.t-bits');
+        if (!out) return;
+        const doneCount = bits.filter((_, i) => inf.bitsDone.has(i)).length;
+        const needed = inf.maxCount && inf.maxCount < bits.length ? inf.maxCount : bits.length;
+        const open = names.filter((_, i) => !inf.bitsDone.has(i));
+        out.innerHTML = `<strong>Steps:</strong> ${S.account ? `${doneCount}/${needed} done` : `${needed}`}${needed < bits.length ? ` <span class="muted">(any ${needed} of ${bits.length})</span>` : ''}
+          <ul class="t-steps">${open.slice(0, 12).map((x) => `<li>${x.icon ? `<img class="mini" src="${esc(x.icon)}" alt="">` : ''}<span class="${x.rarity ? `r-${esc(x.rarity)}` : ''}">${esc(x.label)}</span></li>`).join('')}</ul>
+          ${open.length > 12 ? `<div class="muted">+ ${open.length - 12} more – see the run-through</div>` : ''}`;
+      });
+    }
+    const unlock = body.querySelector('.unlock-lines');
+    if (unlock) {
+      loadUnlockHint(a).then(() => true, () => false).then((ok) => {
+        if (!unlock.isConnected) return;
+        const lines = unlockLines(a);
+        const none = ok ? 'Not stated on the wiki page – open the run-through for the full wiki guide.' : 'The wiki could not be read – try again later.';
+        unlock.innerHTML = (lines.length ? lines : [none]).map((l) => `<div>${l}</div>`).join('');
+      });
+    }
+  }
+
+  // „Next up“ / „in this tree“: Knoten aufklappen und hinscrollen
+  function gotoNode(id) {
+    const li = document.getElementById(`node-${id}`);
+    if (!li) { location.hash = `#/a/${id}`; return; }
+    for (let p = li.parentElement; p; p = p.parentElement) if (p.tagName === 'DETAILS') p.open = true;
+    li.querySelector('details').open = true;
+    fillNode(li);
+    li.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    li.classList.add('flash');
+    setTimeout(() => li.classList.remove('flash'), 1500);
   }
 
   // ---------- Erfolg / Run-Through ----------
@@ -437,8 +818,9 @@
       <header class="focus-head">
         ${achIcon(a).replace('class="icon"', 'class="icon big"')}
         <div class="grow">
-          <div class="sub">${catPath(a)}</div>
+          <div class="sub">${catPath(a)}${S.catOf.has(a.id) ? ` · <a href="#/c/${encodeURIComponent(`cat:${S.catOf.get(a.id).id}`)}">🌳 category as tree</a>` : ''}</div>
           <h1>${esc(a.name)}</h1>
+          ${memberLink(a)}
           ${requirement ? `<p class="req">${esc(requirement)}</p>` : ''}
           <button class="small watch" id="watch-btn">${isWatched(a.id) ? '★ Tracked' : '☆ Track'}</button>
           ${status}
@@ -469,26 +851,10 @@
       .then(() => { if (token === S.viewToken) rerenderTodo(); });
 
     try {
-      const wiki = await loadWiki(a);
+      const { wiki, content, section, wikiName } = await wikiAchContent(a);
       if (token !== S.viewToken) return;
       $('#wiki-link').href = Wiki.pageUrl(S.wikiLang, wiki.title);
-      let content = Wiki.sanitize(S.wikiLang, wiki.html);
-      // Seite gehört nicht nur zu diesem Erfolg (z. B. Kategorieseite)? Dann nur dessen Abschnitt.
-      const wikiName = wiki.ach?.name || a.name;
-      const ownPage = norm(wiki.title.replace(/\s*\((achievement|erfolg)\)$/i, '')) === norm(wikiName);
-      let section = null;
-      if (!ownPage) {
-        const others = S.wikiLang === S.lang
-          ? categoryIds(S.catOf.get(a.id)).filter((x) => x !== a.id).map((x) => S.ach.get(x)?.name).filter(Boolean)
-          : [];
-        section = extractSection(content, wikiName, others);
-        if (section) content = section;
-      }
-      if (inf.needsUnlock || !p) {
-        const uh = wikiUnlockHint(content) || {};
-        uh.partOf = wikiPartOf(content, wiki.title);
-        S.wikiUnlock.set(a.id, uh);
-      }
+      if (inf.needsUnlock || !p) storeUnlockHint(a, content, wiki.title);
       if (!requirement) {
         const wr = section ? sectionRequirement(section, wikiName) : wikiRequirement(content);
         if (wr) {
@@ -506,6 +872,37 @@
       $('#guide').innerHTML = `<p class="muted">No matching wiki page found (${esc(e.message)}).
         <a target="_blank" rel="noopener" href="${Wiki.searchUrl(S.wikiLang, a.name)}">Search the wiki ↗</a></p>`;
     }
+  }
+
+  // Wiki-Inhalt zu einem Erfolg. Gehört die Seite nicht nur zu diesem Erfolg (z. B. Kategorieseite),
+  // bleibt nur dessen Abschnitt übrig.
+  async function wikiAchContent(a) {
+    const wiki = await loadWiki(a);
+    let content = Wiki.sanitize(S.wikiLang, wiki.html);
+    const wikiName = wiki.ach?.name || a.name;
+    const ownPage = norm(wiki.title.replace(/\s*\((achievement|erfolg)\)$/i, '')) === norm(wikiName);
+    let section = null;
+    if (!ownPage) {
+      const others = S.wikiLang === S.lang
+        ? categoryIds(S.catOf.get(a.id)).filter((x) => x !== a.id).map((x) => S.ach.get(x)?.name).filter(Boolean)
+        : [];
+      section = extractSection(content, wikiName, others);
+      if (section) content = section;
+    }
+    return { wiki, content, section, wikiName };
+  }
+
+  function storeUnlockHint(a, content, title) {
+    const uh = wikiUnlockHint(content) || {};
+    uh.partOf = wikiPartOf(content, title);
+    S.wikiUnlock.set(a.id, uh);
+    return uh;
+  }
+
+  async function loadUnlockHint(a) {
+    if (S.wikiUnlock.has(a.id)) return S.wikiUnlock.get(a.id);
+    const { wiki, content } = await wikiAchContent(a);
+    return storeUnlockHint(a, content, wiki.title);
   }
 
   async function loadWiki(a) {
@@ -868,6 +1265,36 @@
     return intro.join(' ');
   }
 
+  // Freischalt-Hinweis als HTML-Zeilen: Sperrtext (API/Wiki), verlinkte Vor-Erfolge, Übersichtsseite
+  function unlockLines(a) {
+    const uh = S.wikiUnlock.get(a.id) || {};
+    const cat = S.catOf.get(a.id);
+    const grp = cat && S.groupOf.get(cat.id);
+    const story = /story journal|storyjournal|journal/i.test(grp?.name || '');
+    const lines = [];
+    if (stripTags(a.locked_text) || uh.text) lines.push(esc(stripTags(a.locked_text) || uh.text));
+    else if (story) lines.push(`Play the “${esc(cat.name)}” story first (Story Journal).`);
+    (uh.achs || []).filter((x) => x.id !== a.id && !(a.prerequisites || []).includes(x.id))
+      .forEach((x) => lines.push(`<a href="#/a/${x.id}">${esc(x.name)}</a> ${stateBadge(x)}${document.getElementById(`node-${x.id}`) ? ` <a href="#" class="sub" data-goto="${x.id}">↑ show in this tree</a>` : ''}`));
+    (uh.partOf || []).forEach((t) => lines.push(partOfLine(t)));
+    return lines.filter(Boolean);
+  }
+
+  // „Teil von …“: als Sammlungs-Baum, wenn die Seite eine Sammlung oder Kategorie ist, sonst die Wiki-Seite
+  function partOfLine(title) {
+    const col = colForTitle(title);
+    if (col && col.key === S.colKey && location.hash.startsWith('#/c/')) return ''; // schon in diesem Baum
+    return col
+      ? `Part of the <a href="#/c/${encodeURIComponent(col.key)}">${esc(col.name)}</a> collection – see the whole chain as a tree ›`
+      : `Part of <a href="${wikiRoute(S.wikiLang, title)}">${esc(title)}</a> – the full chain and walkthrough are there ›`;
+  }
+  function colForTitle(title) {
+    const e = Collections.byTitle(title);
+    if (e) return { key: e.key, name: Collections.nameOf(e, S.lang) };
+    const cat = S.catByName?.get(norm(String(title).replace(/#.*$/, '').replace(/\s*\([^)]*\)\s*$/, '')));
+    return cat && categoryIds(cat).length ? { key: `cat:${cat.id}`, name: cat.name } : null;
+  }
+
   // Ein Text-Schritt, der genau wie ein anderer Erfolg heißt (z. B. bei Story-Metas).
   function linkedAch(n) {
     return n.type === 'Text' ? S.byName?.get(norm(n.label).replace(/[.!]+$/, '')) : null;
@@ -894,16 +1321,7 @@
         <div class="sub" style="margin-left:0">${esc(stripTags(pa.requirement).replace(/\s+/g, ' '))}</div></div>`));
     }
     if (inf.needsUnlock) {
-      const uh = S.wikiUnlock.get(a.id) || {};
-      const cat = S.catOf.get(a.id);
-      const grp = cat && S.groupOf.get(cat.id);
-      const story = /story journal|storyjournal|journal/i.test(grp?.name || '');
-      const lines = [];
-      if (stripTags(a.locked_text) || uh.text) lines.push(esc(stripTags(a.locked_text) || uh.text));
-      else if (story) lines.push(`Play the “${esc(cat.name)}” story first (Story Journal).`);
-      (uh.achs || []).filter((x) => x.id !== a.id)
-        .forEach((x) => lines.push(`<a href="#/a/${x.id}">${esc(x.name)}</a> ${stateBadge(x)}`));
-      (uh.partOf || []).forEach((t) => lines.push(`Part of <a href="${wikiRoute(S.wikiLang, t)}">${esc(t)}</a> – the full chain and walkthrough are there ›`));
+      const lines = unlockLines(a);
       if (!lines.length) lines.push('Not stated on the wiki page – see the wiki guide below.');
       todo.push(item(`<span class="check">🔒</span><div class="grow"><strong>Unlock first:</strong> ${lines.map((l) => `<div>${l}</div>`).join('')}</div>`));
     }
@@ -1129,6 +1547,12 @@
   }
 
   document.addEventListener('click', (e) => {
+    const go = e.target.closest('[data-goto]');
+    if (go) {
+      e.preventDefault();
+      gotoNode(+go.dataset.goto);
+      return;
+    }
     const chat = e.target.closest('button.chatlink');
     if (chat) {
       e.preventDefault();
@@ -1384,9 +1808,9 @@
       S.key = key;
       Store.set('apiKey', key);
       await loadProgress();
-      const extra = ['inventories', 'characters'].filter((p) => !t.permissions.includes(p));
+      const extra = ['inventories', 'characters', 'unlocks'].filter((p) => !t.permissions.includes(p));
       info.innerHTML = `<span class="ok-text">✔ Key “${esc(t.name)}” saved – progress for ${S.progress.size} achievements loaded.</span>
-        ${extra.length ? `<br><span class="muted">Tip: add ${extra.map((x) => `<code>${x}</code>`).join(' + ')} to see which collection items you already own.</span>` : ''}`;
+        ${extra.length ? `<br><span class="muted">Tip: add ${extra.map((x) => `<code>${x}</code>`).join(' + ')} to see which collection items you already own, your mounts and your legendary armory.</span>` : ''}`;
       return true;
     } catch (e) {
       info.innerHTML = `<span class="err">Invalid key: ${esc(e.message)}</span>`;
@@ -1400,7 +1824,7 @@
       <p class="muted">So the tool knows what you already have: create a key on
         <a href="https://account.arena.net/applications" target="_blank" rel="noopener">account.arena.net/applications</a>
         with the permissions <code>account</code> and <code>progression</code> and paste it here.
-        Optional: add <code>inventories</code> and <code>characters</code> so the tool can see which collection items you already own.
+        Optional: add <code>inventories</code>, <code>characters</code> and <code>unlocks</code> so the tool can see which collection items you already own, your mounts and your legendary armory.
         It is only stored locally and only sent to the official GW2 API.</p>
       <div class="key-row">
         <input id="home-key" type="password" placeholder="Paste API key here (Ctrl+V)" autocomplete="off">
@@ -1419,7 +1843,7 @@
         <h2>GW2 API key</h2>
         <p class="muted">Create a key on <a href="https://account.arena.net/applications" target="_blank" rel="noopener">account.arena.net/applications</a>
           with the permissions <code>account</code> and <code>progression</code>.
-          Optional: <code>inventories</code> + <code>characters</code> – shows collection items you already own (bank, materials, bags).
+          Optional: <code>inventories</code> + <code>characters</code> – shows collection items you already own (bank, materials, bags); <code>unlocks</code> – your mounts and legendary armory in the collections.
           The key is only stored locally in your browser and only sent to api.guildwars2.com.</p>
         <input id="s-key" type="password" placeholder="XXXXXXXX-XXXX-…" value="${esc(S.key)}" autocomplete="off">
         <div class="row-btns"><button id="s-save">Save & check</button><button id="s-clear" class="secondary">Remove key</button></div>
@@ -1478,6 +1902,7 @@
     const wm = h.match(/^\/wiki\/(\w+)\/(.+)$/);
     if (wm) showWikiPage(wm[1], decodeURIComponent(wm[2]));
     else if (h.startsWith('/a/')) showAchievement(+h.slice(3));
+    else if (h.startsWith('/c/')) showCollection(decodeURIComponent(h.slice(3)));
     else if (h === '/easy') showEasy();
     else if (h === '/timers') showTimers();
     else if (h === '/settings') showSettings();
@@ -1519,6 +1944,7 @@
     await loadProgress();
     window.addEventListener('hashchange', route);
     route();
+    ensureCollections(); // Sammlungs-Katalog (Reittiere, Legendäre) im Hintergrund
   }
 
   init();
