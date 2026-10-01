@@ -44,6 +44,10 @@ const Geo = (() => {
         world = reduce(floor);
         DB.set(key, { v: CACHE_VERSION, ts: Date.now(), data: world });
       }
+      // Chat-Code -> Ort (Karte, Koordinate) für Routen
+      world.chatInfo = new Map();
+      for (const w of world.waypoints) if (w.chat) world.chatInfo.set(w.chat, { kind: 'waypoint', ...w });
+      for (const p of world.places) if (p.chat && !world.chatInfo.has(p.chat)) world.chatInfo.set(p.chat, p);
       // Chat-Code -> Art (für das passende Symbol vor jedem Code)
       world.byChat = new Map();
       for (const w of world.waypoints) if (w.chat) world.byChat.set(w.chat, 'waypoint');
@@ -95,5 +99,7 @@ const Geo = (() => {
   // Ganze Karten (z. B. „Amnytas“) sind als Ziel zu grob
   const isMap = (name) => !!world && Object.values(world.maps).some((m) => norm(m.name) === norm(name));
 
-  return { load, locate, nearest, nearestWaypoint, mapName, isMap, kindOfChat, get ready() { return !!world; } };
+  const chatInfo = (code) => world?.chatInfo?.get(code) || null;
+
+  return { load, locate, nearest, nearestWaypoint, mapName, isMap, kindOfChat, chatInfo, get ready() { return !!world; } };
 })();

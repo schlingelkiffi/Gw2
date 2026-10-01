@@ -45,7 +45,8 @@ const Timers = (() => {
 
   // Verschiedene Hüllen tolerieren (Array oder { events/sections/data: [...] }), Segmente als Array oder Objekt
   function normalize(raw) {
-    const list = Array.isArray(raw) ? raw : (raw?.events || raw?.sections || raw?.data || null);
+    let list = Array.isArray(raw) ? raw : (raw?.events || raw?.sections || raw?.data || null);
+    if (list && !Array.isArray(list) && typeof list === 'object') list = Object.values(list); // neues Wiki-Format: { events: { id: {...} } }
     if (!Array.isArray(list)) throw new Error('unknown format');
     const out = [];
     for (const e of list) {
@@ -167,5 +168,31 @@ const Timers = (() => {
     return { section: sec, seg: st.seg, running: st.running, label: `${st.seg.name} – ${st.label}`, map: sec.map || sec.name, chat: st.seg.chatlink };
   }
 
-  return { load, status, forAchievement, get sections() { return sections || []; }, get source() { return source; } };
+  // Event zu einem Schritt-Text (z. B. „Defeat Tequatl the Sunless.“): längster Segmentname, der im Text vorkommt
+  function forText(text) {
+    if (!sections || !text) return null;
+    const t = String(text).toLowerCase();
+    let hit = null;
+    for (const sec of sections) {
+      for (const seg of sec.segments) {
+        const n = String(seg.name || '').toLowerCase();
+        if (n.length >= 6 && t.includes(n) && (!hit || n.length > hit.seg.name.length)) hit = { sec, seg };
+      }
+    }
+    if (!hit) {
+      const fb = FALLBACK.find((e) => e.re.test(text));
+      if (fb) {
+        for (const sec of sections) {
+          const seg = sec.segments.find((x) => x.name.toLowerCase() === fb.name.toLowerCase() || fb.re.test(x.name));
+          if (seg) { hit = { sec, seg }; break; }
+        }
+      }
+    }
+    if (!hit) return null;
+    const st = status(hit.sec).find((x) => x.seg.name === hit.seg.name);
+    if (!st) return null;
+    return { section: hit.sec, seg: st.seg, running: st.running, start: st.start, label: `${st.seg.name} – ${st.label}`, map: hit.sec.map || hit.sec.name, chat: st.seg.chatlink };
+  }
+
+  return { load, status, forAchievement, forText, get sections() { return sections || []; }, get source() { return source; } };
 })();

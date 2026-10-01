@@ -18,6 +18,11 @@ Ein Web-Tool für Guild-Wars-2-Erfolge, das komplett im Browser läuft. Oberflä
 
 ## Weitere Funktionen
 
+- **Today (Heute-Plan):** Für deine gemerkten Sammlungen und Erfolge: Weltbosse/Metas, die du für offene Schritte brauchst (z. B. Tequatl für „Radiance of the Sun God“), mit Countdown und Chat-Code; zeitgesperrte Schritte mit dem heutigen Fortschritt; der nächste Schritt je Ziel; Countdown bis zum Tagesreset.
+- **Sammlungen merken:** „☆ Track“ in der Sammlungs-Ansicht; die Startseite zeigt gemerkte Sammlungen mit Fortschritt und „Next up“.
+- **Route pro Karte:** Beim aufgeklappten Erfolg mit Ortsangaben gruppiert „🗺 Route by map“ die offenen Schritte nach Karte (Sammelstücke nach Nähe sortiert, Walkthrough-Ziele in ihrer Reihenfolge) und fasst gleiche Wegmarken zusammen. „📋 Copy codes“ kopiert alle Wegmarken einer Karte in chatgerechten Häppchen.
+- **Event-Timer am Schritt:** Schritte wie „Defeat Tequatl the Sunless“ zeigen im Baum und im Run-Through, wann das Event läuft.
+- **Legendary (Übersicht):** Alle Legendären und Rüstungssets, sortiert danach, wie nah du dran bist (fertige Bauteile, Erfolge, Kosten der fehlenden Materialien). „Analyze all“ baut die Rezeptbäume im Hintergrund auf und speichert sie 7 Tage.
 - **Tracked (Merkliste):** Erfolge mit „☆ Track“ anheften; die Startseite zeigt sie mit Fortschritt und nächstem Schritt.
 - **Fortschritt:** Die Startseite zeigt deinen AP-Verlauf (täglich lokal gespeichert): heute, letzte 7 Tage, Schnitt pro Tag und eine Verlaufskurve.
 - **Items im Account:** Mit den Key-Rechten `inventories` + `characters` zeigt das Tool bei Sammlungen, welche Items schon in Bank, Materiallager oder Taschen liegen.
@@ -88,7 +93,7 @@ Der Key bleibt in deinem Browser (localStorage) und wird nur an `api.guildwars2.
 | `js/wiki.js` | Wiki-Suche (per Spiel-ID über Semantic MediaWiki, sonst per Name), Parsen, HTML-Bereinigung |
 | `js/progress.js` | AP, Stufen, Fortschritt und Leichtigkeits-Score |
 | `js/collections.js` | Sammlungen: Katalog (`/v2/mounts`, `/v2/legendaryarmory`, Erfolgs-Belohnungen) und die zugehörigen Erfolge (Wiki-Seite: verlinkte Kategorien, Erfolge und Bauteile, die ein Erfolg als Belohnung gibt; dazu API-Voraussetzungen) |
-| `js/app.js` | Oberfläche und Routing (`#/`, `#/a/<id>`, `#/c/<sammlung>`, `#/easy`, `#/timers`, `#/settings`) |
+| `js/app.js` | Oberfläche und Routing (`#/`, `#/a/<id>`, `#/c/<sammlung>`, `#/today`, `#/legendaries`, `#/easy`, `#/timers`, `#/settings`) |
 | `electron/main.js` | Desktop-Hülle (Fenster, externe Links im Browser, Menü) |
 | `js/db.js` | IndexedDB-Cache (die Erfolgsdaten werden 7 Tage gecacht) |
 

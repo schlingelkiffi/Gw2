@@ -4,7 +4,7 @@
 // Reittier oder einer Legendären gehören, steht auf der Wiki-Seite: verlinkte Erfolgskategorien und Erfolge sowie
 // Bauteile (z. B. „Gift of the Hylek“), die ein Erfolg als Belohnung gibt. Dazu kommen die Voraussetzungen aus der API.
 const Collections = (() => {
-  const VERSION = 9;
+  const VERSION = 10;
   const MAX_AGE = 7 * 24 * 3600 * 1000;
   const MAX_REWARDERS = 3; // Items, die mehr Erfolge geben, sind allgemeine Belohnungen (Truhen, Materialien)
   const norm = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ').trim();
@@ -62,7 +62,8 @@ const Collections = (() => {
     for (const it of items) {
       if (it.type !== 'Armor') continue;
       const en = names.get(it.id)?.en || it.name;
-      const k = norm(en.split(' ').slice(0, -1).join(' '));
+      // Gewichtsklasse im Namen („Obsidian Heavy Helm“) gehört nicht zum Set-Namen
+      const k = norm(en.split(' ').slice(0, -1).filter((w) => !/^(light|medium|heavy)$/i.test(w)).join(' '));
       if (!k) continue;
       (sets.get(k) || sets.set(k, []).get(k)).push(it);
     }
@@ -70,7 +71,9 @@ const Collections = (() => {
     for (const [k, list] of sets) {
       if (list.length < 2) continue;
       const setNames = {};
-      for (const lang of langs) setNames[lang] = commonPrefix(list.map((it) => names.get(it.id)?.[lang] || it.name)) || list[0].name;
+      for (const lang of langs) {
+        setNames[lang] = commonPrefix(list.map((it) => names.get(it.id)?.[lang] || it.name)) || list[0].name;
+      }
       const pieces = list.map((it) => ({ id: it.id, weight: it.details?.weight_class || 'Other', slot: it.details?.type || '', names: names.get(it.id), icon: it.icon }));
       out.push({ key: `set:${k.replace(/[^a-z0-9]+/g, '-')}`, kind: 'set', names: setNames, icon: list[0].icon, sub: 'Legendary armor set', pieces });
     }

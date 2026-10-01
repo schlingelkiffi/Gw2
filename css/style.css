@@ -33,8 +33,8 @@ header.top {
   padding: .7rem 1rem; background: #0f1115ee; border-bottom: 1px solid var(--line); backdrop-filter: blur(6px);
 }
 .brand { font-weight: 700; color: var(--accent); font-size: 1.1rem; }
-nav { display: flex; gap: .3rem; }
-nav a { padding: .3rem .7rem; border-radius: 6px; color: var(--text); }
+nav { display: flex; flex-wrap: wrap; gap: .3rem; min-width: 0; }
+nav a { padding: .3rem .7rem; border-radius: 6px; color: var(--text); white-space: nowrap; }
 nav a.active, nav a:hover { background: var(--panel-2); text-decoration: none; }
 .account { margin-left: auto; display: flex; gap: .5rem; align-items: center; flex-wrap: wrap; }
 
@@ -233,6 +233,8 @@ button.chatlink.copied { background: var(--ok); color: #0c1a0c; border-style: so
 
 @media (max-width: 640px) {
   header.top { position: static; padding: .5rem .8rem; gap: .4rem 1rem; }
+  nav { gap: .15rem; }
+  nav a { padding: .25rem .5rem; }
   .account { margin-left: 0; font-size: .85rem; }
   main { padding: .8rem; }
   table.easy td:nth-child(1), table.easy th:nth-child(1) { display: none; }
@@ -336,3 +338,13 @@ li.on-path > details > summary { border-left: 3px solid var(--accent); }
 .tgroup.on-path > details > summary, .tpick.on-path > details > summary { border-left: none; }
 .tgroup.on-path > details > summary strong, .tpick.on-path > details > summary strong { color: var(--accent-2); }
 #col-cost { white-space: normal; }
+.ev { font-size: .9rem; margin: .25rem 0; }
+.ev.running { color: var(--accent-2); font-weight: 600; }
+
+/* Route pro Karte */
+.route { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: .5rem .7rem; margin: .4rem 0; }
+.route-head { display: flex; flex-wrap: wrap; align-items: center; gap: .4rem; }
+.route-head .sub { margin-left: 0; }
+.route-head button.small { margin: 0 0 0 auto; }
+ol.route-stops { margin: .4rem 0 0; padding-left: 1.4rem; font-size: .9rem; }
+ol.route-stops li { margin: .2rem 0; }

@@ -226,6 +226,51 @@
     return i < 0;
   }
 
+  // Merkliste für Sammlungen (Schlüssel wie „mount:skyscale“, „item:107022“)
+  const colWatchList = () => Store.get('watchCols', []);
+  const isColWatched = (key) => colWatchList().includes(key);
+  function toggleColWatch(key) {
+    const w = colWatchList();
+    const i = w.indexOf(key);
+    if (i >= 0) w.splice(i, 1); else w.unshift(key);
+    Store.set('watchCols', w);
+    return i < 0;
+  }
+
+  function trackedColsHtml() {
+    const keys = colWatchList();
+    if (!keys.length) return '';
+    return `<h2>🌳 Tracked collections</h2><ul class="list tracked">${keys.map((k) => `<li data-colkey="${esc(k)}">
+      <a class="row" href="#/c/${encodeURIComponent(k)}"><span class="icon ph"></span>
+        <div class="grow"><div class="title">${esc(k)}</div><div class="sub">Loading…</div></div></a></li>`).join('')}</ul>`;
+  }
+
+  // Gemerkte Sammlungen füllen: Name, Fortschritt und nächster Schritt (aus dem gespeicherten Baum)
+  async function fillTrackedCols(root) {
+    const lis = [...root.querySelectorAll('li[data-colkey]')];
+    if (!lis.length) return;
+    await Promise.all([loadCollections(), Collections.loadRewards(colCtx(), [S.lang, 'en']).catch(() => [])]);
+    for (const li of lis) {
+      const e = entryFor(li.dataset.colkey);
+      if (!li.isConnected) return;
+      if (!e) { li.querySelector('.sub').textContent = 'Not found'; continue; }
+      li.querySelector('.row').innerHTML = `${colIcon(e)}<div class="grow"><div class="title">${esc(Collections.nameOf(e, S.lang))} ${kindPill(e)}</div>
+        <div class="sub">Loading…</div></div><span class="pill" data-p hidden></span>`;
+      const res = await Collections.resolve(e, colCtx()).catch(() => null);
+      if (!res || !li.isConnected) continue;
+      const st = colStats(visibleGroups(e, res, e.kind === 'set' ? setWeight(e) : null));
+      const next = nextUpFor(e, res);
+      const sub = li.querySelector('.sub');
+      sub.innerHTML = next ? `▶ Next up: ${esc(next.name)}` : st.total && st.done === st.total ? '✔ All achievements done' : st.total ? 'Everything left is locked' : '';
+      if (st.total) sub.insertAdjacentHTML('afterend', bar(st.done / st.total));
+      const pill = li.querySelector('[data-p]');
+      pill.textContent = st.total ? `${st.done}/${st.total}` : '';
+      pill.hidden = !st.total;
+      pill.classList.toggle('ok', st.total > 0 && st.done === st.total);
+      if (unlockedPill(e)) pill.insertAdjacentHTML('beforebegin', unlockedPill(e));
+    }
+  }
+
   // Nächster sinnvoller Schritt als Kurztext
   function nextStepText(a, inf) {
     if (inf.finished) return 'Completed';
@@ -355,10 +400,11 @@
     if (!el) return; // Suche verlassen, bevor die verzögerte Eingabe ankam
     const q = norm(S.query);
     if (q.length < 2) {
-      el.innerHTML = `${progressCardHtml()}${S.account ? trackedHtml() : ''}<p class="muted">${S.ach.size.toLocaleString('en-US')} achievements loaded. Type at least 2 characters.
+      el.innerHTML = `${progressCardHtml()}${trackedColsHtml()}${S.account ? trackedHtml() : ''}<p class="muted">${S.ach.size.toLocaleString('en-US')} achievements loaded. Type at least 2 characters.
         <br>🌳 Search for a mount or a legendary (e.g. “Skyscale”, “Endless Summer”, or just “legendary”) to see every achievement on the way as a tree.
         ${S.account ? '' : '<br>Tip: with an API key you see your progress and the <a href="#/easy">Easy AP finder</a>.'}</p>`;
       drawSpark();
+      fillTrackedCols(el);
       return;
     }
     ensureCollections();
@@ -489,6 +535,18 @@
       apMax += isFinite(inf.possible) ? inf.possible : inf.earned;
     }
     return { done, total: ids.length, ap, apMax };
+  }
+
+  // Nächster Schritt ohne Baum: offener Erfolg mit den wenigsten (indirekten) Voraussetzungen, Angefangenes zuerst.
+  // Erfolge unter Bauteilen, die schon im Account liegen, zählen nicht.
+  function nextUpFor(entry, res) {
+    if (!S.account) return null;
+    const groups = visibleGroups(entry, res, entry.kind === 'set' ? setWeight(entry) : null)
+      .filter((g) => !g.extra && !(g.itemId && S.inv?.get(g.itemId)));
+    const cands = [...new Set(groups.flatMap((g) => g.ids))].filter((id) => ['progress', 'open'].includes(nodeState(S.ach.get(id))));
+    const prog = (id) => nodeState(S.ach.get(id)) === 'progress';
+    cands.sort((x, y) => ancestors(x).size - ancestors(y).size || prog(y) - prog(x));
+    return cands[0] ? S.ach.get(cands[0]) : null;
   }
 
   // Fortschritt bekannter Sammlungen in den Suchtreffern nachtragen (nur wenn schon einmal aufgebaut)
@@ -760,7 +818,7 @@
         <div class="grow"><div class="title${(it?.rarity || n?.rarity) ? ` r-${esc(it?.rarity || n.rarity)}` : ''}">${esc(name)}</div>
           <div class="sub">${sub}</div></div>${count}</summary>
       <ul class="tree">${kids.map((k) => k.html).join('')}</ul></details></li>`;
-    return { html, state, missing, kidsHtml: kids.map((k) => k.html).join('') };
+    return { html, state, missing, kids, kidsHtml: kids.map((k) => k.html).join('') };
   }
 
   // Handelsposten-Preise der fehlenden Grundmaterialien nachtragen (Sofortkauf)
@@ -796,6 +854,7 @@
         <div class="grow">
           <div class="sub">${kindPill(entry)}${entry.kind === 'category' ? ` ${esc(entry.sub)}` : ''}</div>
           <h1>${esc(name)}</h1>
+          ${entry.kind === 'category' ? '' : `<button class="small watch" id="col-watch">${isColWatched(entry.key) ? '★ Tracked' : '☆ Track'}</button>`}
           <div id="col-weights"></div>
           <div id="col-summary"><p class="muted">Collecting the achievements…</p></div>
         </div>
@@ -804,6 +863,8 @@
       <details id="col-acq" class="box" hidden><summary>📖 How to get it (wiki)</summary><div class="wiki" id="col-acq-body"></div></details>
       <p class="muted" id="col-foot"></p>`;
     const onStatus = (t) => { if (token === S.viewToken && $('#col-status')) $('#col-status').textContent = t; };
+    const watchBtn = $('#col-watch');
+    if (watchBtn) watchBtn.onclick = () => { watchBtn.textContent = toggleColWatch(entry.key) ? '★ Tracked' : '☆ Track'; };
     let res;
     try {
       res = await Collections.resolve(entry, colCtx(onStatus), { force });
@@ -987,6 +1048,84 @@
     }));
   }
 
+  // ---------- Route pro Karte ----------
+  // Schritte mit Ort nach Karte gruppieren; innerhalb einer Karte nach Nähe (Koordinaten aus den Kartendaten),
+  // sonst gleiche Gebiete/Wegmarken zusammen. Gleiche Wegmarke = ein Halt.
+  async function buildRoute(steps) {
+    await Geo.load(S.wikiLang).catch(() => null);
+    const spots = [];
+    for (const st of steps) {
+      let { chat } = st;
+      let zone = null;
+      if (st.area && (!chat || !Geo.chatInfo(chat))) {
+        const wp = await areaWaypoint(st.area);
+        if (!chat && wp?.code) chat = wp.code;
+        zone = wp?.zone || null;
+      }
+      const info = chat ? Geo.chatInfo(chat) : null;
+      spots.push({ ...st, chat, coord: info?.coord || null, zone: info ? Geo.mapName(info.map) : zone, stop: info?.name || null });
+    }
+    const groups = new Map();
+    for (const sp of spots) (groups.get(sp.zone || 'Other') || groups.set(sp.zone || 'Other', []).get(sp.zone || 'Other')).push(sp);
+    return [...groups].map(([zone, list]) => {
+      let ordered = list;
+      // Nur Sammelstücke (Reihenfolge egal) nach Nähe sortieren – Ziele eines Walkthroughs bleiben in ihrer Reihenfolge
+      if (list.every((x) => x.coord && !x.sequential)) {
+        // Nächster-Nachbar-Route ab dem ersten Schritt
+        const rest = [...list];
+        ordered = [rest.shift()];
+        while (rest.length) {
+          const last = ordered[ordered.length - 1].coord;
+          let bi = 0;
+          rest.forEach((x, i) => { if (Math.hypot(x.coord[0] - last[0], x.coord[1] - last[1]) < Math.hypot(rest[bi].coord[0] - last[0], rest[bi].coord[1] - last[1])) bi = i; });
+          ordered.push(rest.splice(bi, 1)[0]);
+        }
+      } else {
+        // ohne Koordinaten: gleiche Wegmarke bzw. gleiches Gebiet zusammen, in Wiki-Reihenfolge
+        const key = (x) => x.chat || x.area || x.title;
+        const order = [...new Set(list.map(key))];
+        ordered = order.flatMap((k) => list.filter((x) => key(x) === k));
+      }
+      // Aufeinanderfolgende Schritte mit gleicher Wegmarke zu einem Halt zusammenfassen
+      const stops = [];
+      for (const x of ordered) {
+        const last = stops[stops.length - 1];
+        if (last && x.chat && last.chat === x.chat) last.titles.push(x.title);
+        else stops.push({ chat: x.chat, area: x.area, stop: x.stop, titles: [x.title] });
+      }
+      return { zone, stops };
+    }); // Karten in der Reihenfolge, in der sie zuerst vorkommen
+  }
+
+  // Chat-Codes in Häppchen, die in eine Chat-Nachricht passen (~199 Zeichen)
+  function codeChunks(codes) {
+    const out = [];
+    let cur = '';
+    for (const c of codes) {
+      if (cur && (cur.length + 1 + c.length) > 190) { out.push(cur); cur = c; } else cur = cur ? `${cur} ${c}` : c;
+    }
+    if (cur) out.push(cur);
+    return out;
+  }
+
+  function routeHtml(route) {
+    return route.map(({ zone, stops }) => {
+      const codes = [...new Set(stops.map((s) => s.chat).filter(Boolean))];
+      const chunks = codeChunks(codes);
+      const total = stops.reduce((n, s) => n + s.titles.length, 0);
+      // Gemeinsamen Namensanfang kürzen („Skyscale Scales #1, #5“)
+      const short = (titles) => {
+        const m = titles.map((t) => /^(.*?)(#\d+)$/.exec(t));
+        return m.every(Boolean) && new Set(m.map((x) => x[1])).size === 1 ? `${m[0][1]}${m.map((x) => x[2]).join(', ')}` : titles.join(', ');
+      };
+      return `<div class="route"><div class="route-head"><strong>🗺 ${esc(zone)}</strong> <span class="sub">${total} step${total === 1 ? '' : 's'} · ${stops.length} stop${stops.length === 1 ? '' : 's'}</span>
+          ${chunks.length ? `<button class="small copy-codes" data-chunks="${esc(JSON.stringify(chunks))}" data-i="0">📋 Copy codes${chunks.length > 1 ? ` (1/${chunks.length})` : ''}</button>` : ''}</div>
+        <ol class="route-stops">${stops.map((s) => `<li>${s.chat ? chatBtn(s.chat, Geo.kindOfChat(s.chat)) : ''} <strong>${esc(s.stop || s.area || '')}</strong>
+          ${s.stop && s.area ? `<span class="sub">${esc(s.area)}</span>` : ''}
+          <div class="sub route-steps">${esc(short(s.titles).split(', ').join(' · '))}</div></li>`).join('')}</ol></div>`;
+    }).join('');
+  }
+
   // Inhalt eines aufgeklappten Knotens: Anforderung, Freischalt-Weg, offene Schritte, Belohnung
   async function fillNode(li) {
     if (li.dataset.filled) return;
@@ -1008,6 +1147,7 @@
       parts.push(`<div class="t-sec t-unlock"><strong>🔒 How to unlock it:</strong><div class="unlock-lines">${unlockLines(a).map((l) => `<div>${l}</div>`).join('')}
         <div class="muted wait">Checking the wiki…</div></div></div>`);
     }
+    if (!inf.finished) parts.push(evLine(Timers.forAchievement(a, S.catOf.get(a.id))));
     if (bits.length && !inf.finished) parts.push('<div class="t-sec t-bits"><span class="muted">Loading steps…</span></div>');
     if (isMeta(a) && !li.querySelector('.tpick')) {
       const cat = S.catOf.get(a.id);
@@ -1031,25 +1171,42 @@
         const needed = inf.maxCount && inf.maxCount < bits.length ? inf.maxCount : bits.length;
         const open = names.map((x, i) => ({ x, i })).filter(({ i }) => !inf.bitsDone.has(i));
         const MAX = 30;
+        const located = []; // Schritte mit Ort für die Route
         const rows = open.slice(0, MAX).map(({ x, i }) => {
           const det = wiki ? stepDetails(wiki.content, a.id, i, x.label) : null;
+          if (det && (det.chat || det.area)) located.push({ title: det.title && norm(det.title).startsWith(norm(x.label)) ? det.title : x.label, chat: det.chat, area: det.area, sequential: x.type === 'Text' });
           const icon = x.icon ? `<img class="mini" src="${esc(x.icon)}" alt="">` : '';
           const title = det?.title && norm(det.title).startsWith(norm(x.label)) ? det.title : x.label;
           const name = `${icon}<span class="${x.rarity ? `r-${esc(x.rarity)}` : ''}">${esc(title)}</span>`;
+          const ev = x.type === 'Text' ? Timers.forText(`${x.label} ${det?.title || ''}`) : null;
           if (!det) {
             const place = x.type === 'Text' ? Geo.locate(x.label) : null;
-            return `<li class="tstep-plain">${name}${place ? waypointLine(place) : ''}</li>`;
+            return `<li class="tstep-plain">${name}${place ? waypointLine(place) : ''}${evLine(ev)}</li>`;
           }
           return `<li class="tstep"><details><summary>${name}${det.area ? ` <span class="sub">· ${esc(det.area)}</span>` : ''}
-              ${det.chat ? chatBtn(det.chat) : det.needArea ? `<span class="area-chat" data-area="${esc(det.area)}"></span>` : ''}${det.hasImgs ? ' <span class="sub">🖼</span>' : ''}</summary>${det.html}</details></li>`;
+              ${det.chat ? chatBtn(det.chat) : det.needArea ? `<span class="area-chat" data-area="${esc(det.area)}"></span>` : ''}${det.hasImgs ? ' <span class="sub">🖼</span>' : ''}${ev ? ` <span class="sub">${ev.running ? '🔥 now' : `⏰ ${esc(ev.label.replace(/^.*?next at /, '').replace(/ \(in .*$/, ''))}`}</span>` : ''}</summary>${evLine(ev)}${det.html}</details></li>`;
         });
         out.innerHTML = `<strong>Steps:</strong> ${S.account ? `${doneCount}/${needed} done` : `${needed}`}${needed < bits.length ? ` <span class="muted">(any ${needed} of ${bits.length})</span>` : ''}
           ${rows.some((r) => r.includes('class="tstep"')) ? '<span class="muted"> – tap a step for waypoint, description and screenshots</span>' : ''}
+          ${located.length >= 3 ? '<div><button class="small route-btn">🗺 Route by map</button></div><div class="route-out"></div>' : ''}
           <ul class="t-steps">${rows.join('')}</ul>
           ${open.length > MAX ? `<div class="muted">+ ${open.length - MAX} more – see the run-through</div>` : ''}`;
         tagChatKinds(out);
         bindAnchors(out);
         fillAreaWaypoints(out);
+        const rb = out.querySelector('.route-btn');
+        if (rb) {
+          rb.onclick = async () => {
+            const ro = out.querySelector('.route-out');
+            if (ro.innerHTML) { ro.innerHTML = ''; rb.textContent = '🗺 Route by map'; return; }
+            rb.disabled = true;
+            rb.textContent = 'Planning route…';
+            ro.innerHTML = routeHtml(await buildRoute(located));
+            tagChatKinds(ro);
+            rb.disabled = false;
+            rb.textContent = '🗺 Hide route';
+          };
+        }
       });
     }
     const unlock = body.querySelector('.unlock-lines');
@@ -1315,9 +1472,15 @@
     if (!areaWpCache.has(k)) {
       areaWpCache.set(k, (async () => {
         const res = await Wiki.page(S.wikiLang, title);
-        const btns = [...Wiki.sanitize(S.wikiLang, res.html).querySelectorAll('button.chatlink[data-kind]')]
+        const page = Wiki.sanitize(S.wikiLang, res.html);
+        const btns = [...page.querySelectorAll('button.chatlink[data-kind]')]
           .map((b) => ({ code: b.dataset.code, kind: b.dataset.kind, name: b.dataset.name || '' }));
-        return btns.find((x) => x.kind === 'waypoint') || btns.find((x) => x.kind === 'landmark') || btns[0] || null;
+        // Karte des Gebiets aus der Infobox („Zone: Dragonfall (Crystal Desert)“)
+        const label = [...page.querySelectorAll('th, dt, b')].find((x) => /^(zone|karte|gebiet)$/i.test(x.textContent.trim()));
+        const val = label && (label.nextElementSibling || label.parentElement);
+        const zone = (val?.querySelector('a[data-wiki]')?.textContent || '').trim() || null;
+        const wp = btns.find((x) => x.kind === 'waypoint') || btns.find((x) => x.kind === 'landmark') || btns[0] || null;
+        return wp ? { ...wp, zone } : zone ? { zone } : null;
       })().catch(() => null));
     }
     return areaWpCache.get(k);
@@ -1329,7 +1492,7 @@
       const wp = await areaWaypoint(area);
       root.querySelectorAll(`[data-area="${CSS.escape(area)}"]`).forEach((el) => {
         el.dataset.filled = '1';
-        if (!wp) return;
+        if (!wp?.code) return;
         const btn = chatBtn(wp.code, wp.kind || Geo.kindOfChat(wp.code));
         el.innerHTML = el.classList.contains('area-chat') ? btn
           : `${wp.kind === 'waypoint' ? 'Nearest waypoint' : 'Nearby'}: <strong>${esc(wp.name || area)}</strong> ${btn}`;
@@ -1385,6 +1548,8 @@
     for (const el of content.querySelectorAll('p, li, dd, td')) {
       if (el.querySelector('p, li, table')) continue;
       const text = el.textContent.replace(/\s+/g, ' ').trim();
+      // Belohnungen („Tale of Adventure (once per day)“) sind keine Zeitsperre des Erfolgs
+      if (/tale of adventure|reward|belohnung/i.test(text) || el.closest('.infobox, .achievementbox, .infobox-achievement')) continue;
       if (text.length < 400 && TIMEGATE_RE.test(text)) {
         const sentence = text.split(/(?<=[.!?])\s+/).find((x) => TIMEGATE_RE.test(x)) || text;
         return sentence;
@@ -1416,6 +1581,12 @@
   const chatBtn = (code, kind = Geo.kindOfChat(code)) => (code
     ? `<button type="button" class="chatlink k-${kind}" data-code="${esc(code)}" title="${CHAT_TITLES[kind] || 'Chat link'} – tap to copy, paste into the in-game chat">${esc(code)}</button>`
     : '');
+
+  // Event-Zeile (Weltboss/Meta): läuft gerade oder nächster Start, mit Chat-Code
+  // Karte eines Events: aus dem Chat-Code (Kartendaten), sonst der Abschnittsname der Timer-Daten
+  const evMap = (ev) => Geo.mapName(Geo.chatInfo(ev.chat)?.map) || ev.map;
+  const evLine = (ev) => (ev ? `<div class="ev${ev.running ? ' running' : ''}">${ev.running ? '🔥' : '⏰'} ${esc(ev.label)}
+    <span class="sub">· ${esc(evMap(ev))}</span> ${chatBtn(ev.chat)} <a class="sub" href="#/timers">all timers</a></div>` : '');
 
   // Chat-Codes aus dem Wiki bekommen nachträglich ihr Symbol, sobald die Kartendaten da sind
   function tagChatKinds(root = document) {
@@ -1790,11 +1961,14 @@
           : '';
         const priceLine = price?.buy ? `<div class="price">💰 ${coins(price.buy)} on the Trading Post <span class="sub">(buy now)</span></div>` : '';
         const wpLine = !det && n.type === 'Text' ? waypointLine(Geo.locate(wikiLabel)) : '';
+        const stepEv = n.type === 'Text' ? Timers.forText(`${wikiLabel} ${det?.title || ''}`) : null;
+        const achEv = Timers.forAchievement(a, S.catOf.get(a.id));
+        const evHtml = stepEv && stepEv.seg.name !== achEv?.seg.name ? evLine(stepEv) : '';
         const imgs = !det && content && !(hint && hint.includes('<img')) ? findWikiImages(content, wikiLabel) : '';
         const mark = S.account ? '○' : `<input type="checkbox" class="manual" data-bit="${i}" ${manual.has(i) ? 'checked' : ''} title="Tick off manually (no API key)">`;
         todo.push(item(`<span class="check">${mark}</span><div class="grow">${head}
           ${ownLine}${priceLine}
-          ${wpLine}
+          ${evHtml}${wpLine}
           ${det ? det.html : ''}
           ${hint ? `<div class="hint wiki">${hint}</div>` : ''}
           ${imgs}
@@ -1959,6 +2133,19 @@
       gotoNode(+go.dataset.goto);
       return;
     }
+    const cc = e.target.closest('button.copy-codes');
+    if (cc) {
+      e.preventDefault();
+      const chunks = JSON.parse(cc.dataset.chunks || '[]');
+      const i = +cc.dataset.i || 0;
+      copyText(chunks[i]).then(() => toast(chunks.length > 1
+        ? `Codes ${i + 1}/${chunks.length} copied – paste into the chat, then tap again for the next part.`
+        : 'Codes copied – paste them into the in-game chat with Ctrl+V.'));
+      const nx = (i + 1) % chunks.length;
+      cc.dataset.i = nx;
+      if (chunks.length > 1) cc.textContent = `📋 Copy codes (${nx + 1}/${chunks.length})`;
+      return;
+    }
     const chat = e.target.closest('button.chatlink');
     if (chat) {
       e.preventDefault();
@@ -1995,6 +2182,202 @@
         target.scrollIntoView({ behavior: 'smooth', block: 'start' });
       }
     }));
+  }
+
+  // ---------- Legendäre: Übersicht ----------
+  // Stand einer Legendären/eines Sets aus dem gespeicherten Rezeptbaum: Bauteile, Erfolge, fehlende Materialien
+  function legySummary(entry, res) {
+    const weight = entry.kind === 'set' ? setWeight(entry) : null;
+    const roots = entry.kind === 'set' ? entry.pieces.filter((p) => p.weight === weight).map((p) => p.id) : (res?.roots || []);
+    if (!res?.items || !roots.some((id) => res.items[id])) return null;
+    const tc = { home: new Map(), shown: new Set(), units: [] };
+    const ctx = { items: res.items, avail: new Map([...(S.inv || new Map())].map(([id, e]) => [id, e.count])), tc, leaves: [] };
+    const nodes = roots.map((id) => itemNode(id, 1, ctx, new Set(), 0));
+    const comps = entry.kind === 'set' ? nodes : (nodes[0].kids || []).filter((k) => 'missing' in k);
+    const box = document.createElement('div');
+    box.innerHTML = nodes.map((n) => n.html).join('');
+    const achIds = [...new Set([...box.querySelectorAll('.tnode')].filter((li) => !li.closest('.tpick')).map((li) => +li.dataset.id))];
+    const achDone = achIds.filter((id) => Progress.info(S.ach.get(id), S.progress.get(id)).finished).length;
+    return {
+      owned: nodes.every((n) => n.missing <= 0), comps: comps.length, compsDone: comps.filter((k) => k.state === 'done').length,
+      ach: achIds.length, achDone, leaves: ctx.leaves,
+    };
+  }
+
+  const LEGY_TYPES = { Weapon: 'Weapons', Armor: 'Armor', Trinket: 'Trinkets', Back: 'Back items', UpgradeComponent: 'Runes & sigils', Relic: 'Relics' };
+  async function showLegendaries() {
+    setNav('legendary');
+    const token = ++S.viewToken;
+    view.innerHTML = '<h1>✦ Legendaries</h1><p class="muted">Loading…</p>';
+    await Promise.all([loadCollections(), S.invPromise, S.unlockPromise]);
+    if (token !== S.viewToken) return;
+    const all = Collections.catalog.filter((e) => e.kind === 'legendary' || e.kind === 'set');
+    const typeOf = (e) => (e.kind === 'set' ? 'Armor' : e.type);
+    const sums = new Map();
+    const f = Store.get('legyFilter', { type: '', owned: false });
+    view.innerHTML = `<h1>✦ Legendaries</h1>
+      <p class="muted">All legendaries, sorted by how close you are: components ready, achievements and the cost of missing tradable materials.
+        ${S.inv ? '' : 'Add the key permissions <code>inventories</code> + <code>unlocks</code> to see what you already have.'}</p>
+      <div class="filters">
+        <label>Type <select id="lg-type"><option value="">All</option>${Object.entries(LEGY_TYPES).map(([k, v]) => `<option value="${k}">${v}</option>`).join('')}</select></label>
+        <label><input type="checkbox" id="lg-owned" ${f.owned ? 'checked' : ''}> Show owned</label>
+        <button class="small" id="lg-analyze"></button> <span class="muted" id="lg-status"></span>
+      </div>
+      <ul class="list legy-list" id="lg-list"></ul>`;
+    $('#lg-type').value = f.type;
+    const render = () => {
+      if (token !== S.viewToken) return;
+      const ownedArm = (e) => (e.kind === 'set' ? false : !!S.unlocks?.legendary?.get(e.itemId));
+      const rows = all.filter((e) => (!f.type || typeOf(e) === f.type))
+        .map((e) => ({ e, s: sums.get(e.key) || null, owned: ownedArm(e) || !!sums.get(e.key)?.owned }))
+        .filter((r) => f.owned || !r.owned);
+      const ratio = (r) => (r.s && r.s.comps ? r.s.compsDone / r.s.comps : -1);
+      const achRatio = (r) => (r.s && r.s.ach ? r.s.achDone / r.s.ach : 0);
+      // Kosten 0 bei unfertigen Bauteilen heißt meist „keine Preisdaten“ – dann hinten einsortieren
+      const cost = (r) => (!r.s ? 1e15 : r.s.cost || (r.s.compsDone < r.s.comps ? 1e14 : 0));
+      rows.sort((x, y) => (x.owned - y.owned) || (ratio(y) - ratio(x)) || (achRatio(y) - achRatio(x)) || (cost(x) - cost(y))
+        || Collections.nameOf(x.e, S.lang).localeCompare(Collections.nameOf(y.e, S.lang)));
+      const left = all.filter((e) => !sums.has(e.key)).length;
+      const btn = $('#lg-analyze');
+      btn.textContent = left ? `🔍 Analyze all (${left} left)` : '✔ All analyzed';
+      btn.disabled = !left || S.lgBusy;
+      $('#lg-list').innerHTML = rows.map(({ e, s, owned }) => `<li><a class="row" href="#/c/${encodeURIComponent(e.key)}">${colIcon(e)}
+        <div class="grow"><div class="title">${esc(Collections.nameOf(e, S.lang))} <span class="sub">${esc(e.kind === 'set' ? `Legendary armor set · ${setWeight(e)}` : e.sub)}</span></div>
+          <div class="sub">${owned ? '✔ in your armory'
+            : s ? `${s.compsDone}/${s.comps} ${e.kind === 'set' ? 'pieces' : 'components'} ready · ${s.achDone}/${s.ach} achievements${s.cost ? ` · 💰 ≈ ${coins(s.cost)}` : ''}`
+              : 'not analyzed yet'}</div>
+          ${s && !owned && s.comps ? bar(s.compsDone / s.comps) : ''}</div></a></li>`).join('') || '<p class="muted">Nothing to show.</p>';
+    };
+    const summarize = async (e) => {
+      const res = await Collections.cached(e, colCtx());
+      if (!res) return false;
+      const s = legySummary(e, res);
+      if (!s) { sums.set(e.key, { comps: 0, compsDone: 0, ach: 0, achDone: 0, cost: 0 }); return true; }
+      await loadPrices([...new Set(s.leaves.map((l) => l.id))]);
+      s.cost = s.leaves.reduce((n, l) => n + (priceCache.get(l.id)?.buy || 0) * l.missing, 0);
+      sums.set(e.key, s);
+      return true;
+    };
+    $('#lg-type').onchange = (ev) => { f.type = ev.target.value; Store.set('legyFilter', f); render(); };
+    $('#lg-owned').onchange = (ev) => { f.owned = ev.target.checked; Store.set('legyFilter', f); render(); };
+    $('#lg-analyze').onclick = async () => {
+      S.lgBusy = true;
+      const todo = all.filter((e) => !sums.has(e.key));
+      let n = 0;
+      render();
+      await pool(todo, 2, async (e) => {
+        await Collections.resolve(e, colCtx()).catch(() => null);
+        await summarize(e).catch(() => null);
+        n++;
+        if (token === S.viewToken) { $('#lg-status').textContent = `Analyzing ${n}/${todo.length} (results are saved for 7 days)…`; render(); }
+      });
+      S.lgBusy = false;
+      if (token === S.viewToken) { $('#lg-status').textContent = ''; render(); }
+    };
+    render();
+    // Schon gespeicherte Bäume sofort auswerten
+    await pool(all, 4, async (e) => { if (await summarize(e).catch(() => false)) render(); });
+  }
+
+  // ---------- Heute-Plan ----------
+  // Für gemerkte Sammlungen und Erfolge: Events mit Countdown, zeitgesperrte Schritte, nächste Schritte
+  async function showToday() {
+    setNav('today');
+    const token = ++S.viewToken;
+    view.innerHTML = `<h1>📅 Today</h1>
+      <p class="muted">Daily reset in <strong id="today-reset">${untilReset()}</strong> (00:00 UTC) · for your tracked collections and achievements.</p>
+      <section><h2>⏰ Events for your goals</h2><div id="today-events"><p class="muted">Loading…</p></div></section>
+      <section><h2>⏳ Time-gated steps</h2><div id="today-gates"><p class="muted">Loading…</p></div></section>
+      <section><h2>▶ Next up</h2><div id="today-next"><p class="muted">Loading…</p></div></section>`;
+    await Promise.all([Timers.load(), loadCollections(), Collections.loadRewards(colCtx(), [S.lang, 'en']).catch(() => []), Geo.load(S.wikiLang).catch(() => null)]);
+    if (token !== S.viewToken) return;
+    const cols = colWatchList().map((k) => entryFor(k)).filter(Boolean);
+    const achIds = watchList().filter((id) => S.ach.has(id));
+    if (!cols.length && !achIds.length) {
+      view.querySelectorAll('section').forEach((sec) => sec.remove());
+      view.insertAdjacentHTML('beforeend', `<p class="muted">Nothing tracked yet. Open a collection (e.g. search “Skyscale” or “Endless Summer”) or an achievement and tap <strong>☆ Track</strong> – your daily plan shows up here.</p>`);
+      return;
+    }
+    // Kandidaten: offene (machbare) Erfolge der gemerkten Sammlungen + gemerkte Erfolge
+    const goalOf = new Map(); // Erfolg -> Ziel (Name, Link)
+    const nexts = [];
+    for (const e of cols) {
+      const res = await Collections.resolve(e, colCtx()).catch(() => null);
+      if (token !== S.viewToken) return;
+      if (!res) continue;
+      const name = Collections.nameOf(e, S.lang);
+      const groups = visibleGroups(e, res, e.kind === 'set' ? setWeight(e) : null).filter((g) => !g.extra && !(g.itemId && S.inv?.get(g.itemId)));
+      for (const id of new Set(groups.flatMap((g) => g.ids))) if (!goalOf.has(id)) goalOf.set(id, { name, href: `#/c/${encodeURIComponent(e.key)}` });
+      nexts.push({ e, name, next: nextUpFor(e, res), st: colStats(groups) });
+    }
+    for (const id of achIds) if (!goalOf.has(id)) goalOf.set(id, { name: S.ach.get(id).name, href: `#/a/${id}` });
+    const doable = [...goalOf.keys()].filter((id) => { const st = nodeState(S.ach.get(id)); return st === 'open' || st === 'progress' || st === 'unknown'; });
+
+    // Next up
+    $('#today-next').innerHTML = `<ul class="list tracked">${[
+      ...nexts.map(({ e, name, next, st }) => `<li><a class="row" href="#/c/${encodeURIComponent(e.key)}">${colIcon(e)}
+        <div class="grow"><div class="title">${esc(name)}</div><div class="sub">${next ? `▶ ${esc(next.name)} – ${esc(truncate(nextStepText(next, Progress.info(next, S.progress.get(next.id))), 120))}` : st.total && st.done === st.total ? '✔ done' : 'Everything left is locked – open the tree to see how to unlock it'}</div>
+        ${st.total ? bar(st.done / st.total) : ''}</div>${st.total ? `<span class="pill">${st.done}/${st.total}</span>` : ''}</a></li>`),
+      ...achIds.map((id) => { const a = S.ach.get(id); const inf = Progress.info(a, S.progress.get(id)); return inf.finished ? '' : `<li><a class="row" href="#/a/${id}">${achIcon(a)}
+        <div class="grow"><div class="title">${esc(a.name)}</div><div class="sub">${esc(nextStepText(a, inf))}</div></div>${stateBadge(a)}</a></li>`; }),
+    ].join('')}</ul>`;
+
+    // Events: Erfolg selbst (Weltboss/Meta) und offene Text-Schritte („Defeat Tequatl the Sunless.“)
+    const renderEvents = () => {
+      if (token !== S.viewToken || !$('#today-events')) return false;
+      const evs = new Map(); // Segment -> { ev, uses: [...] }
+      for (const id of doable) {
+        const a = S.ach.get(id);
+        const inf = Progress.info(a, S.progress.get(id));
+        const add = (ev, step) => {
+          if (!ev) return;
+          const k = `${ev.section.name}|${ev.seg.name}`;
+          const cur = evs.get(k) || evs.set(k, { ev, uses: [] }).get(k);
+          cur.uses.push({ a, step, goal: goalOf.get(id) });
+        };
+        add(Timers.forAchievement(a, S.catOf.get(id)), null);
+        (a.bits || []).forEach((b, i) => { if (b.type === 'Text' && b.text && !inf.bitsDone.has(i)) add(Timers.forText(b.text), b.text); });
+      }
+      const list = [...evs.values()].sort((x, y) => y.ev.running - x.ev.running || (x.ev.start || 0) - (y.ev.start || 0));
+      $('#today-events').innerHTML = list.length ? `<ol class="steps">${list.map(({ ev, uses }) => `<li class="${ev.running ? 'running' : ''}">
+          <span class="check">${ev.running ? '🔥' : '⏰'}</span><div class="grow"><strong>${esc(ev.label)}</strong>
+          <div class="sub" style="margin-left:0">${esc(evMap(ev))} ${chatBtn(ev.chat)}</div>
+          ${uses.slice(0, 4).map((u) => `<div class="sub" style="margin-left:0">for <a href="#/a/${u.a.id}">${esc(u.a.name)}</a>${u.step ? ` – ${esc(u.step)}` : ''}${u.goal && u.goal.name !== u.a.name ? ` · <a href="${u.goal.href}">${esc(u.goal.name)}</a>` : ''}</div>`).join('')}
+          </div></li>`).join('')}</ol>`
+        : '<p class="muted">No world boss or meta event needed for your open steps right now.</p>';
+      tagChatKinds($('#today-events'));
+      const r = $('#today-reset');
+      if (r) r.textContent = untilReset();
+      return true;
+    };
+    renderEvents();
+    const iv = setInterval(() => { if (!renderEvents()) clearInterval(iv); }, 30000);
+
+    // Zeitsperren aus dem Wiki (z. B. „4 times per day“) für die machbaren Erfolge
+    const cands = doable.filter((id) => S.account ? nodeState(S.ach.get(id)) !== 'unknown' : true).slice(0, 25);
+    const gates = [];
+    const gateCache = Store.get('gateCache', {}); // Erfolg -> { ts, gate } (Wiki-Text ändert sich selten)
+    const WEEK = 7 * 24 * 3600 * 1000;
+    await pool(cands, 3, async (id) => {
+      const a = S.ach.get(id);
+      let hit = gateCache[id];
+      if (!hit || Date.now() - hit.ts > WEEK) {
+        const { content } = await wikiAchContent(a).catch(() => ({}));
+        if (!content) return;
+        hit = { ts: Date.now(), gate: timegateSentence(content) || '' };
+        gateCache[id] = hit;
+      }
+      if (hit.gate) gates.push({ a, gate: hit.gate });
+    });
+    Store.set('gateCache', gateCache);
+    if (token !== S.viewToken) return;
+    $('#today-gates').innerHTML = gates.length ? `<ol class="steps">${gates.map(({ a, gate }) => {
+      const p = S.progress.get(a.id);
+      const gained = S.snap && p ? (p.current || 0) - (S.snap.cur[a.id] || 0) : 0;
+      return `<li><span class="check">⏳</span><div class="grow"><a href="#/a/${a.id}">${esc(a.name)}</a> ${stateBadge(a)}
+        <div class="sub" style="margin-left:0">${esc(gate)}</div>
+        ${S.account ? `<div class="sub" style="margin-left:0">${gained > 0 ? `✔ Today: +${gained} progress` : 'No progress yet today'}</div>` : ''}</div></li>`;
+    }).join('')}</ol>` : '<p class="muted">No daily limits found for your open steps.</p>';
   }
 
   // ---------- Event-Timer ----------
@@ -2311,6 +2694,8 @@
     else if (h.startsWith('/c/')) showCollection(decodeURIComponent(h.slice(3)));
     else if (h === '/easy') showEasy();
     else if (h === '/timers') showTimers();
+    else if (h === '/today') showToday();
+    else if (h === '/legendaries') showLegendaries();
     else if (h === '/settings') showSettings();
     else showSearch();
   }
