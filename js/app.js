@@ -470,7 +470,7 @@
   };
   function kindPill(e) {
     const [ic, label] = COL_KIND[e.kind];
-    return `<span class="pill kind k-${e.kind}">${ic} ${esc(e.kind === 'legendary' ? e.sub : label)}</span>`;
+    return `<span class="pill kind k-${e.kind}">${ic} ${esc(e.kind === 'legendary' || e.kind === 'set' ? e.sub || label : label)}</span>`;
   }
   const colIcon = (e, cls = 'icon') => (e.icon ? `<img class="${cls}" src="${esc(e.icon)}" alt="" loading="lazy">` : `<span class="${cls} ph"></span>`);
 
@@ -2242,7 +2242,7 @@
       btn.textContent = left ? `🔍 Analyze all (${left} left)` : '✔ All analyzed';
       btn.disabled = !left || S.lgBusy;
       $('#lg-list').innerHTML = rows.map(({ e, s, owned }) => `<li><a class="row" href="#/c/${encodeURIComponent(e.key)}">${colIcon(e)}
-        <div class="grow"><div class="title">${esc(Collections.nameOf(e, S.lang))} <span class="sub">${esc(e.kind === 'set' ? `Legendary armor set · ${setWeight(e)}` : e.sub)}</span></div>
+        <div class="grow"><div class="title">${esc(Collections.nameOf(e, S.lang))} <span class="sub">${esc(e.kind === 'set' ? `${e.sub} · ${setWeight(e)}` : e.sub)}</span></div>
           <div class="sub">${owned ? '✔ in your armory'
             : s ? `${s.compsDone}/${s.comps} ${e.kind === 'set' ? 'pieces' : 'components'} ready · ${s.achDone}/${s.ach} achievements${s.cost ? ` · 💰 ≈ ${coins(s.cost)}` : ''}`
               : 'not analyzed yet'}</div>

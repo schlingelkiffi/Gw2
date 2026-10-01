@@ -4,7 +4,7 @@
 // Reittier oder einer Legendären gehören, steht auf der Wiki-Seite: verlinkte Erfolgskategorien und Erfolge sowie
 // Bauteile (z. B. „Gift of the Hylek“), die ein Erfolg als Belohnung gibt. Dazu kommen die Voraussetzungen aus der API.
 const Collections = (() => {
-  const VERSION = 10;
+  const VERSION = 11;
   const MAX_AGE = 7 * 24 * 3600 * 1000;
   const MAX_REWARDERS = 3; // Items, die mehr Erfolge geben, sind allgemeine Belohnungen (Truhen, Materialien)
   const norm = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ').trim();
@@ -57,25 +57,42 @@ const Collections = (() => {
   }
 
   // Legendäre Rüstung: Teile nach Set gruppieren (englischer Name ohne letztes Wort)
+  const SLOT_LABEL = { Helm: 'helm', HelmAquatic: 'aquatic helm', Shoulders: 'shoulders', Coat: 'chest', Gloves: 'gloves', Leggings: 'leggings', Boots: 'boots' };
   function groupArmor(items, names, langs) {
     const sets = new Map();
     for (const it of items) {
       if (it.type !== 'Armor') continue;
       const en = names.get(it.id)?.en || it.name;
-      // Gewichtsklasse im Namen („Obsidian Heavy Helm“) gehört nicht zum Set-Namen
-      const k = norm(en.split(' ').slice(0, -1).filter((w) => !/^(light|medium|heavy)$/i.test(w)).join(' '));
+      // Gewichtsklasse im Namen („Obsidian Heavy Helm“) gehört nicht zum Set-Namen;
+      // einwortige Namen („Selachimorpha“, je Gewicht gleich) bleiben als eigene Gruppe
+      const words = en.split(' ').filter((w) => !/^(light|medium|heavy)$/i.test(w));
+      const k = norm((words.length > 1 ? words.slice(0, -1) : words).join(' '));
       if (!k) continue;
       (sets.get(k) || sets.set(k, []).get(k)).push(it);
+    }
+    // Zweiwortige Teilnamen („Ardent Glorious Plate Helm“) und Zusatzwörter („Sublime Mistforged Triumphant Hero's Raiment“)
+    // zum größeren Set, dessen Name darin steckt – nur wenn Slot und Gewicht dort noch fehlen
+    const own = new Map([...sets].map(([k, list]) => [k, [...list]]));
+    const slotOf = (it) => `${it.details?.weight_class}/${it.details?.type}`;
+    for (const [k, list] of [...sets].sort((a, b) => a[1].length - b[1].length)) {
+      const host = [...sets.keys()].filter((o) => o !== k && sets.get(o).length > list.length
+        && (k.startsWith(`${o} `) || k.endsWith(` ${o}`))
+        && !list.some((it) => sets.get(o).some((x) => slotOf(x) === slotOf(it))))
+        .sort((a, b) => b.length - a.length)[0];
+      if (host) { sets.get(host).push(...list); sets.delete(k); }
     }
     const out = [];
     for (const [k, list] of sets) {
       if (list.length < 2) continue;
       const setNames = {};
       for (const lang of langs) {
-        setNames[lang] = commonPrefix(list.map((it) => names.get(it.id)?.[lang] || it.name)) || list[0].name;
+        const base = own.get(k);
+        setNames[lang] = commonPrefix(base.map((it) => names.get(it.id)?.[lang] || it.name)) || base[0].name;
       }
       const pieces = list.map((it) => ({ id: it.id, weight: it.details?.weight_class || 'Other', slot: it.details?.type || '', names: names.get(it.id), icon: it.icon }));
-      out.push({ key: `set:${k.replace(/[^a-z0-9]+/g, '-')}`, kind: 'set', names: setNames, icon: list[0].icon, sub: 'Legendary armor set', pieces });
+      const slots = new Set(pieces.map((p) => p.slot));
+      const sub = slots.size === 1 ? `Legendary ${SLOT_LABEL[pieces[0].slot] || 'armor'}` : 'Legendary armor set';
+      out.push({ key: `set:${k.replace(/[^a-z0-9]+/g, '-')}`, kind: 'set', names: setNames, icon: own.get(k)[0].icon, sub, pieces });
     }
     return out;
   }
