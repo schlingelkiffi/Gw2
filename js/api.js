@@ -92,7 +92,7 @@ const GW2 = (() => {
     const missing = [...new Set(ids)].filter((id) => !(id in cache));
     if (missing.length) {
       const res = await getMany(path, missing, { lang });
-      for (const r of res) cache[r.id] = { name: r.name, icon: r.icon, rarity: r.rarity };
+      for (const r of res) cache[r.id] = { name: r.name, icon: r.icon, rarity: r.rarity, type: r.type };
       for (const id of missing) if (!(id in cache)) cache[id] = null;
       DB.set(ck, cache);
     }

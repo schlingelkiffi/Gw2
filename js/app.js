@@ -61,6 +61,7 @@
     S.groups = [...data.groups].sort((a, b) => a.order - b.order);
     for (const g of S.groups) for (const cid of g.categories || []) if (cats.has(cid)) S.groupOf.set(cid, g);
     Collections.reset();
+    ancestorMemo.clear();
     S.byName = new Map();
     for (const a of data.achievements) {
       const k = norm(a.name);
@@ -376,16 +377,18 @@
     fillCollectionProgress(el);
   }
 
-  // ---------- Sammlungen (Reittiere, Legendäre, Kategorien) ----------
+  // ---------- Sammlungen (Reittiere, Legendäre, Belohnungen) ----------
   const colLangs = () => [S.lang, 'en', S.wikiLang];
   const loadCollections = () => Collections.loadCatalog(colLangs()).catch((e) => { console.warn('Sammlungen', e); return []; });
   let colLoadKey = null;
-  // Katalog im Hintergrund laden; danach die Suchergebnisse mit den Sammlungen neu zeichnen
+  // Katalog (Reittiere, Legendäre) und Erfolgs-Belohnungen im Hintergrund laden; danach die Suchergebnisse neu zeichnen
   function ensureCollections() {
     const k = colLangs().join(',');
-    if (colLoadKey === k) return;
+    if (colLoadKey === k || !S.ach.size) return;
     colLoadKey = k;
-    loadCollections().then(() => { if ($('#results') && norm(S.query).length >= 3) renderResults(); });
+    const redraw = () => { if ($('#results') && norm(S.query).length >= 3) renderResults(); };
+    loadCollections().then(redraw);
+    Collections.loadRewards(colCtx(), [S.lang, 'en']).then(redraw).catch((e) => console.warn('Belohnungen', e));
   }
 
   function colCtx(onStatus) {
@@ -402,56 +405,73 @@
   }
   const entryFor = (key) => (key.startsWith('cat:') ? categoryEntry(+key.slice(4)) : Collections.entry(key));
 
-  const COL_KIND = { mount: ['🐉', 'Mount'], legendary: ['✦', 'Legendary'], category: ['📁', 'Category'] };
+  const COL_KIND = {
+    mount: ['🐉', 'Mount'], legendary: ['✦', 'Legendary'], set: ['✦', 'Legendary armor set'],
+    reward: ['🎁', 'Item'], title: ['🏷️', 'Title'], category: ['📁', 'Category'],
+  };
   function kindPill(e) {
     const [ic, label] = COL_KIND[e.kind];
     return `<span class="pill kind k-${e.kind}">${ic} ${esc(e.kind === 'legendary' ? e.sub : label)}</span>`;
   }
+  const colIcon = (e, cls = 'icon') => (e.icon ? `<img class="${cls}" src="${esc(e.icon)}" alt="" loading="lazy">` : `<span class="${cls} ph"></span>`);
 
-  function unlockedPill(e) {
+  function unlockedPill(e, weight) {
     const u = S.unlocks;
     if (e.kind === 'mount' && u?.mounts) return u.mounts.has(e.mountId) ? '<span class="pill ok">✔ unlocked</span>' : '<span class="pill">not unlocked yet</span>';
     if (e.kind === 'legendary' && u?.legendary) {
       const n = u.legendary.get(e.itemId);
       return n ? `<span class="pill ok">✔ in your armory${n > 1 ? ` (${n}×)` : ''}</span>` : '';
     }
+    if (e.kind === 'set' && u?.legendary) {
+      const pieces = e.pieces.filter((p) => !weight || p.weight === weight);
+      const have = pieces.filter((p) => u.legendary.get(p.id)).length;
+      return have ? `<span class="pill${have === pieces.length ? ' ok' : ''}">✔ ${have}/${pieces.length} pieces in your armory</span>` : '';
+    }
+    if (e.kind === 'reward') {
+      const own = S.inv?.get(e.itemId);
+      return own ? `<span class="pill ok">✔ ${own.count}× in your account</span>` : '';
+    }
     return '';
   }
 
-  const wordStart = (n, q) => n.startsWith(q) || n.includes(` ${q}`);
   function collectionResults(query) {
-    const q = norm(query);
-    if (q.length < 3) return '';
+    if (norm(query).length < 3) return '';
     const entries = Collections.match(query);
-    const cats = (S.categories || [])
-      .filter((c) => categoryIds(c).length >= 2 && wordStart(norm(c.name), q))
-      .sort((x, y) => (x.order ?? 0) - (y.order ?? 0))
-      .slice(0, 6)
-      .map((c) => categoryEntry(c.id));
-    const shown = [...entries.slice(0, 12), ...cats];
-    if (!shown.length) return '';
+    if (!entries.length) return '';
+    const shown = entries.slice(0, 12);
     const rows = shown.map((e) => {
-      const sub = e.kind === 'category' ? `${esc(e.sub)} · ${categoryIds(S.catById.get(e.catId)).length} achievements`
-        : e.kind === 'mount' ? 'Every achievement on the way to this mount' : 'Every achievement needed for this legendary';
-      return `<li><a class="row" href="#/c/${encodeURIComponent(e.key)}">
-        ${e.icon ? `<img class="icon" src="${esc(e.icon)}" alt="" loading="lazy">` : '<span class="icon ph"></span>'}
-        <div class="grow"><div class="title">${esc(Collections.nameOf(e, S.lang))} ${kindPill(e)}</div><div class="sub">🌳 ${sub}</div></div>
+      const sub = {
+        mount: 'Every achievement on the way to this mount',
+        legendary: 'Every achievement needed for this legendary',
+        set: `${e.pieces?.length || 0} pieces · every achievement needed for the set`,
+      }[e.kind] || e.sub;
+      return `<li><a class="row" href="#/c/${encodeURIComponent(e.key)}">${colIcon(e)}
+        <div class="grow"><div class="title">${esc(Collections.nameOf(e, S.lang))} ${kindPill(e)}</div><div class="sub">🌳 ${esc(sub)}</div></div>
         ${unlockedPill(e)}<span class="pill" data-colprog="${esc(e.key)}" hidden></span>
       </a></li>`;
     });
     return `<h3 class="res-head">🌳 Collections</h3><ul class="list collections">${rows.join('')}</ul>
-      ${entries.length > 12 ? `<p class="muted">… and ${entries.length - 12} more collections. Refine your search.</p>` : ''}`;
+      ${entries.length > shown.length ? `<p class="muted">… and ${entries.length - shown.length} more. Refine your search.</p>` : ''}`;
   }
 
-  // Erledigt/gesamt einer Sammlung (ohne die eingeklappten „verwandten“ Gruppen)
-  function colStats(res) {
-    const ids = [...new Set(res.groups.filter((g) => !g.related && !g.extra).flatMap((g) => g.ids))];
+  // Gruppen, die zur Ansicht gehören (Set: nur Teile der gewählten Gewichtsklasse)
+  function visibleGroups(entry, res, weight) {
+    if (entry.kind !== 'set') return res.groups;
+    const other = new Set(entry.pieces.filter((p) => p.weight !== weight).map((p) => p.id));
+    return res.groups.filter((g) => !(g.itemId && other.has(g.itemId)));
+  }
+
+  // Erledigt/gesamt einer Sammlung (ohne Vor-Erfolge aus anderen Kategorien).
+  // Liegt ein Bauteil schon im Account, zählen seine Erfolge als erledigt.
+  function colStats(groups) {
+    const ids = [...new Set(groups.filter((g) => !g.extra).flatMap((g) => g.ids))];
+    const owned = new Set(groups.filter((g) => g.itemId && S.inv?.get(g.itemId)).flatMap((g) => g.ids));
     let done = 0, ap = 0, apMax = 0;
     for (const id of ids) {
       const a = S.ach.get(id);
       if (!a) continue;
       const inf = Progress.info(a, S.progress.get(id));
-      if (inf.finished) done++;
+      if (inf.finished || owned.has(id)) done++;
       ap += inf.earned;
       apMax += isFinite(inf.possible) ? inf.possible : inf.earned;
     }
@@ -464,9 +484,9 @@
     root.querySelectorAll('[data-colprog]').forEach(async (pill) => {
       const e = entryFor(pill.dataset.colprog);
       if (!e) return;
-      const res = e.kind === 'category' ? await Collections.resolve(e, colCtx()) : await Collections.cached(e, colCtx());
+      const res = await Collections.cached(e, colCtx());
       if (!res || !pill.isConnected) return;
-      const st = colStats(res);
+      const st = colStats(visibleGroups(e, res, e.kind === 'set' ? setWeight(e) : null));
       if (!st.total) return;
       pill.textContent = `${st.done}/${st.total} done`;
       pill.classList.toggle('ok', st.done === st.total);
@@ -476,15 +496,23 @@
 
   // Merkt sich, zu welcher Sammlung ein Erfolg gehört (für den Link auf der Erfolgsseite)
   function rememberMembers(entry, res) {
-    if (entry.kind === 'category') return;
+    if (!['mount', 'legendary', 'set'].includes(entry.kind)) return;
     const m = Store.get('colMembers', {});
     const name = Collections.nameOf(entry, S.lang);
-    for (const g of res.groups) if (!g.related) for (const id of g.ids) m[id] = [entry.key, name];
+    for (const g of res.groups) for (const id of g.ids) m[id] = [entry.key, name];
     Store.set('colMembers', m);
   }
   function memberLink(a) {
     const m = Store.get('colMembers', {})[a.id];
     return m ? `<p class="col-link"><a href="#/c/${encodeURIComponent(m[0])}">🌳 Part of the ${esc(m[1])} collection – see the whole chain ›</a></p>` : '';
+  }
+
+  // Rüstungsset: gewählte Gewichtsklasse (gemerkt), sonst die erste vorhandene
+  const WEIGHTS = ['Light', 'Medium', 'Heavy'];
+  function setWeight(entry) {
+    const have = WEIGHTS.filter((w) => entry.pieces.some((p) => p.weight === w));
+    const saved = Store.get('setWeight', null);
+    return have.includes(saved) ? saved : have[0] || entry.pieces[0]?.weight || null;
   }
 
   const openPrereqs = (a) => (a.prerequisites || []).map((id) => S.ach.get(id))
@@ -498,25 +526,49 @@
     if (inf.needsUnlock || openPrereqs(a).length) return 'locked';
     return inf.current > 0 ? 'progress' : 'open';
   }
-
-  // Voraussetzungen vor den Erfolgen, die sie brauchen; sonst Reihenfolge wie gefunden (Wiki-Reihenfolge)
-  function topoOrder(ids) {
-    const set = new Set(ids);
-    const deps = new Map(ids.map((id) => [id, (S.ach.get(id)?.prerequisites || []).filter((p) => set.has(p) && p !== id)]));
-    const out = [];
-    const done = new Set();
-    while (out.length < ids.length) {
-      const next = ids.find((id) => !done.has(id) && deps.get(id).every((p) => done.has(p))) ?? ids.find((id) => !done.has(id));
-      done.add(next);
-      out.push(next);
-    }
-    return out;
+  // Zustand eines Zweigs aus den Zuständen seiner Erfolge
+  function branchState(states) {
+    if (!S.account) return 'unknown';
+    if (states.length && states.every((s) => s === 'done')) return 'done';
+    if (states.includes('progress')) return 'progress';
+    return states.includes('open') ? 'open' : 'locked';
   }
 
   const truncate = (s, n) => (s.length > n ? `${s.slice(0, n - 1)}…` : s);
   const ST_ICON = { done: '✔', progress: '◐', open: '○', locked: '🔒', unknown: '○' };
 
-  function nodeHtml(a, state, isNext, num) {
+  // ---------- Baum: Ziel oben, darunter das, was man dafür braucht ----------
+  // Einheiten: Kategorie (📁), Bauteil (🎁) oder bei Reittieren ein einzelner Schritt. Jeder Erfolg erscheint
+  // einmal vollständig in seiner Einheit; braucht ihn ein Erfolg aus einer anderen Einheit, steht dort ein Verweis.
+  function buildUnits(groups, sequential) {
+    const units = [];
+    for (const g of groups) {
+      if (g.kind === 'prereq') continue; // Vor-Erfolge anderer Kategorien hängen direkt an ihren Erfolgen
+      if (sequential && g.kind === 'achievements') g.ids.forEach((id) => units.push({ kind: 'single', ids: [id], title: S.ach.get(id)?.name || '' }));
+      else units.push({ ...g });
+    }
+    if (sequential && units.length > 1) units.forEach((u, i) => { u.step = `Step ${i + 1}`; });
+    return units;
+  }
+
+  // Erfolge einer Einheit, die kein anderer Erfolg der Einheit voraussetzt (die „Spitzen“)
+  function unitSinks(u) {
+    const set = new Set(u.ids);
+    const needed = new Set();
+    for (const id of u.ids) for (const p of S.ach.get(id)?.prerequisites || []) if (set.has(p) && p !== id) needed.add(p);
+    const sinks = u.ids.filter((id) => !needed.has(id));
+    return sinks.length ? sinks : u.ids.slice(0, 1);
+  }
+
+  function refNode(a, unit, note = '') {
+    const st = nodeState(a);
+    const where = unit ? `↪ ${unit.step ? `${unit.step} · ` : ''}${unit.kind === 'single' ? '' : unit.title}` : '↪ see above';
+    return `<li class="tref s-${st}"><span class="st">${ST_ICON[st]}</span><a href="#" data-goto="${a.id}">${esc(a.name)}</a>
+      <span class="sub">${esc(note || where.replace(/ · $/, ''))}</span> ${stateBadge(a)}</li>`;
+  }
+
+  function nodeLi(a, kids = '', step = '', note = '') {
+    const state = nodeState(a);
     const inf = Progress.info(a, S.progress.get(a.id));
     let line;
     if (state === 'done') line = 'Completed';
@@ -525,29 +577,108 @@
       line = open.length ? `🔒 Requires: ${open.map((x) => x.name).join(', ')}` : `🔒 ${stripTags(a.locked_text) || 'Locked – expand to see how to unlock it'}`;
     } else if (state === 'unknown') line = requirementOf(a);
     else line = nextStepText(a, inf);
-    return `<li class="tnode s-${state}${isNext ? ' current' : ''}" id="node-${a.id}" data-id="${a.id}"><details${isNext ? ' open' : ''}>
-      <summary><span class="st">${ST_ICON[state]}</span>${num ? `<span class="num">${num}</span>` : ''}${achIcon(a)}
-        <div class="grow"><div class="title">${esc(a.name)}${isNext ? ' <span class="pill warn">next up</span>' : ''}</div>
+    return `<li class="tnode s-${state}" id="node-${a.id}" data-id="${a.id}"><details>
+      <summary><span class="st">${ST_ICON[state]}</span>${achIcon(a)}
+        <div class="grow"><div class="title">${step ? `<span class="pill step">${esc(step)}</span> ` : ''}${esc(a.name)}${note ? ` <span class="pill">${esc(note)}</span>` : ''}</div>
           <div class="sub">${esc(truncate(line.replace(/\s+/g, ' '), 180))}</div>
           ${state === 'progress' && inf.maxCount > 1 ? bar(inf.frac) : ''}</div>
         ${stateBadge(a)}</summary>
-      <div class="tbody"><p class="muted">Loading…</p></div></details></li>`;
+      <div class="tbody"><p class="muted">Loading…</p></div>
+      <ul class="tree tkids">${kids}</ul></details></li>`;
   }
 
-  const GROUP_ICON = { category: '📁', achievements: '🏆', component: '🎁', related: '🔎', prereq: '🔗' };
-  function groupHtml(g, ids, next, counter) {
-    const states = ids.map((id) => nodeState(S.ach.get(id)));
+  // Meta-Erfolg: „noch N von diesen“ – nur wenn die Kategorie nicht ohnehin als Einheit im Baum steht
+  function metaPick(a, tc, ui) {
+    if (!isMeta(a) || nodeState(a) === 'done') return '';
+    const cat = S.catOf.get(a.id);
+    const others = categoryIds(cat).filter((id) => id !== a.id && S.ach.has(id));
+    if (!others.length || others.some((id) => tc.home.has(id))) return '';
+    const inf = Progress.info(a, S.progress.get(a.id));
+    const left = Math.max(0, inf.maxCount - inf.current);
+    const sorted = [...others].sort((x, y) => (nodeState(S.ach.get(x)) === 'done') - (nodeState(S.ach.get(y)) === 'done'));
+    return `<li class="tpick"><details><summary><span class="t-ico">🎯</span>
+        <strong>${S.account ? `${left} more` : `${inf.maxCount}`} of these ${others.length}</strong>
+        <span class="sub">any of them count for “${esc(a.name)}”</span></summary>
+      <ul class="tree">${sorted.map((id) => achNode(id, tc, ui)).join('')}</ul></details></li>`;
+  }
+
+  // Alle (auch indirekten) Voraussetzungen eines Erfolgs
+  const ancestorMemo = new Map();
+  function ancestors(id, stack = new Set()) {
+    if (ancestorMemo.has(id)) return ancestorMemo.get(id);
+    const out = new Set();
+    if (stack.has(id)) return out; // Zyklus
+    stack.add(id);
+    for (const p of S.ach.get(id)?.prerequisites || []) {
+      out.add(p);
+      ancestors(p, stack).forEach((x) => out.add(x));
+    }
+    stack.delete(id);
+    ancestorMemo.set(id, out);
+    return out;
+  }
+  // Nur direkte Äste: Voraussetzungen, die schon über eine andere Voraussetzung nötig sind, weglassen
+  function directPrereqs(a) {
+    const pre = (a.prerequisites || []).filter((p) => S.ach.has(p) && p !== a.id);
+    return pre.filter((p) => !pre.some((q) => q !== p && ancestors(q).has(p)));
+  }
+
+  function achNode(id, tc, ui, extra = '', step = '') {
+    const a = S.ach.get(id);
+    if (!a) return '';
+    const h = tc.home.get(id);
+    if (tc.shown.has(id) || (h != null && h !== ui)) {
+      // Verweis auf den direkt vorherigen Einzelschritt sparen – der hängt ohnehin darunter
+      if (h === ui - 1 && tc.sequential && tc.units[h].kind === 'single') return '';
+      return refNode(a, h != null && h !== ui ? tc.units[h] : null);
+    }
+    tc.shown.add(id);
+    const kids = directPrereqs(a).map((pid) => achNode(pid, tc, ui)).join('') + metaPick(a, tc, ui) + extra;
+    return nodeLi(a, kids, step);
+  }
+
+  function itemLi(u, states, kids) {
+    const it = S.colItems?.[u.itemId];
+    const own = u.itemId ? S.inv?.get(u.itemId) : null;
+    const state = own ? 'done' : branchState(states);
+    return `<li class="titem s-${state}"><details><summary><span class="st">${ST_ICON[state]}</span>
+        ${it?.icon ? `<img class="icon" src="${esc(it.icon)}" alt="">` : '<span class="icon ph"></span>'}
+        <div class="grow"><div class="title${it?.rarity ? ` r-${esc(it.rarity)}` : ''}">${esc(it?.name || u.title)}</div>
+          <div class="sub">${own ? `✔ ${own.count}× in your account (${esc([...own.where].join(', '))})`
+            : u.via ? 'Part of the recipe – comes from these achievements' : 'Reward from these achievements'}</div></div></summary>
+      <ul class="tree">${kids}</ul></details></li>`;
+  }
+
+  function unitNode(u, ui, tc, prev, flat) {
+    if (u.kind === 'single') return achNode(u.ids[0], tc, ui, prev, u.step);
+    const kids = unitSinks(u).map((id) => achNode(id, tc, ui)).join('') + prev;
+    if (flat) return kids; // Belohnung/Titel: das Ziel ist schon die Wurzel
+    const states = u.ids.map((id) => nodeState(S.ach.get(id)));
+    if (u.kind === 'component') return itemLi(u, states, kids);
     const done = states.filter((s) => s === 'done').length;
-    const title = g.kind === 'achievements' ? 'Achievements' : g.kind === 'related' ? `More achievements mentioning “${g.title}”` : g.title;
-    const sub = g.kind === 'component' ? (g.via ? 'part of the recipe – comes from these achievements' : 'reward from these achievements')
-      : { category: 'achievement category', prereq: 'prerequisites from other categories' }[g.kind] || '';
-    const open = !g.related && (!S.account || done < ids.length);
-    return `<li class="tgroup${S.account && done === ids.length ? ' all-done' : ''}"><details${open ? ' open' : ''}><summary>
-        <span class="t-ico">${GROUP_ICON[g.kind] || '📁'}</span><strong>${esc(title)}</strong>
-        <span class="pill${S.account && done === ids.length ? ' ok' : ''}">${S.account ? `${done}/${ids.length}` : ids.length}</span>
-        ${sub ? `<span class="sub">${sub}</span>` : ''}</summary>
-      <ul class="tree">${ids.map((id, i) => nodeHtml(S.ach.get(id), states[i], id === next, g.related ? null : counter())).join('')}</ul>
-    </details></li>`;
+    const state = branchState(states);
+    return `<li class="tgroup s-${state}"><details><summary><span class="st">${ST_ICON[state]}</span>
+        <span class="t-ico">${u.kind === 'category' ? '📁' : '🏆'}</span>
+        ${u.step ? `<span class="pill step">${esc(u.step)}</span>` : ''}<strong>${esc(u.kind === 'achievements' ? 'Achievements' : u.title)}</strong>
+        <span class="pill${S.account && done === u.ids.length ? ' ok' : ''}">${S.account ? `${done}/${u.ids.length}` : u.ids.length}</span>
+        ${u.kind === 'category' ? '<span class="sub">achievement category</span>' : ''}</summary>
+      <ul class="tree">${kids}</ul></details></li>`;
+  }
+
+  // Set: die Teile der gewählten Gewichtsklasse mit Stand in der Waffenkammer
+  function piecesNode(entry, weight) {
+    const pieces = entry.pieces.filter((p) => p.weight === weight);
+    const arm = S.unlocks?.legendary;
+    const have = arm ? pieces.filter((p) => arm.get(p.id)).length : null;
+    const state = have == null ? 'unknown' : have === pieces.length ? 'done' : 'open';
+    return `<li class="tgroup s-${state}"><details${state === 'done' ? '' : ' open'}><summary><span class="st">${ST_ICON[state]}</span><span class="t-ico">🛡️</span>
+        <strong>${esc(weight)} pieces</strong>
+        ${have != null ? `<span class="pill${have === pieces.length ? ' ok' : ''}">${have}/${pieces.length} in your armory</span>` : `<span class="pill">${pieces.length}</span>`}</summary>
+      <ul class="tree">${pieces.map((p) => {
+        const ok = arm?.get(p.id);
+        return `<li class="tleaf${ok ? ' s-done' : ''}"><span class="st">${arm ? (ok ? '✔' : '○') : '•'}</span>${p.icon ? `<img class="mini" src="${esc(p.icon)}" alt="">` : ''}
+          <span class="r-Legendary">${esc(Collections.nameOf(p, S.lang))}</span></li>`;
+      }).join('')}</ul></details></li>`;
   }
 
   async function showCollection(key, force = false) {
@@ -556,7 +687,7 @@
     let entry = entryFor(key);
     if (!entry && !key.startsWith('cat:')) {
       view.innerHTML = '<p class="muted">Loading collections…</p>';
-      await loadCollections();
+      await Promise.all([loadCollections(), Collections.loadRewards(colCtx(), [S.lang, 'en']).catch(() => [])]);
       if (token !== S.viewToken) return;
       entry = entryFor(key);
     }
@@ -565,10 +696,11 @@
     view.innerHTML = `
       <p><a href="javascript:history.back()" class="link">← Back</a></p>
       <header class="focus-head col-head">
-        ${entry.icon ? `<img class="icon big" src="${esc(entry.icon)}" alt="">` : '<span class="icon big ph"></span>'}
+        ${colIcon(entry, 'icon big')}
         <div class="grow">
           <div class="sub">${kindPill(entry)}${entry.kind === 'category' ? ` ${esc(entry.sub)}` : ''}</div>
           <h1>${esc(name)}</h1>
+          <div id="col-weights"></div>
           <div id="col-summary"><p class="muted">Collecting the achievements…</p></div>
         </div>
       </header>
@@ -579,7 +711,11 @@
     let res;
     try {
       res = await Collections.resolve(entry, colCtx(onStatus), { force });
-      await S.unlockPromise;
+      const itemIds = res.groups.map((g) => g.itemId).filter(Boolean);
+      [S.colItems] = await Promise.all([
+        itemIds.length ? GW2.resolve('Item', itemIds, S.lang).catch(() => ({})) : {},
+        S.unlockPromise, S.invPromise,
+      ]);
     } catch (e) {
       if (token === S.viewToken) $('#col-tree').innerHTML = `<p class="err">Could not build the collection: ${esc(e.message)}</p>`;
       return;
@@ -591,56 +727,101 @@
   function renderCollection(entry, res) {
     S.colKey = entry.key;
     rememberMembers(entry, res);
-    const main = res.groups.filter((g) => !g.related).map((g) => ({ g, ids: topoOrder(g.ids) }));
-    const rel = res.groups.filter((g) => g.related).map((g) => ({ g, ids: topoOrder(g.ids) }));
-    const flat = main.flatMap((x) => x.ids);
-    const next = S.account ? flat.find((id) => ['progress', 'open'].includes(nodeState(S.ach.get(id)))) : null;
-    const st = colStats(res);
+    const weight = entry.kind === 'set' ? setWeight(entry) : null;
+    const groups = visibleGroups(entry, res, weight);
+    const units = buildUnits(groups, res.sequential);
+    const tc = { home: new Map(), shown: new Set(), units, sequential: res.sequential };
+    units.forEach((u, ui) => u.ids.forEach((id) => { if (!tc.home.has(id)) tc.home.set(id, ui); }));
+    const flat = entry.kind === 'reward' || entry.kind === 'title';
+    let html = '';
+    if (res.sequential && units.length > 1) units.forEach((u, i) => { html = unitNode(u, i, tc, html, false); });
+    else html = units.map((u, i) => unitNode(u, i, tc, '', flat)).join('');
+    if (entry.kind === 'set' && weight) html = piecesNode(entry, weight) + html;
 
-    const nextA = next && S.ach.get(next);
+    if (entry.kind === 'set') {
+      const have = WEIGHTS.filter((w) => entry.pieces.some((p) => p.weight === w));
+      $('#col-weights').innerHTML = have.length > 1 ? `<div class="seg">${have.map((w) => `<button class="${w === weight ? 'on' : ''}" data-weight="${w}">${w}</button>`).join('')}</div>` : '';
+      $('#col-weights').querySelectorAll('button').forEach((b) => { b.onclick = () => { Store.set('setWeight', b.dataset.weight); renderCollection(entry, res); }; });
+    }
+
+    const tree = $('#col-tree');
+    const name = Collections.nameOf(entry, S.lang);
+    tree.innerHTML = html
+      ? `<h2>What you need</h2><div class="troot">${colIcon(entry)}<strong>${esc(name)}</strong> ${unlockedPill(entry, weight)}</div>
+        <ul class="tree root">${html}</ul>`
+      : `<h2>What you need</h2><p class="muted">No achievements found for this collection.
+          ${res.wikiError ? `The wiki could not be read (${esc(res.wikiError)}).` : 'It is probably unlocked through the story, crafting or a vendor – see “How to get it” below.'}</p>`;
+
+    // Nächster Schritt: der am tiefsten liegende offene Erfolg (das, was man zuerst machen kann)
+    const depth = (el) => { let d = 0; for (let p = el.parentElement; p && p !== tree; p = p.parentElement) if (p.tagName === 'LI') d++; return d; };
+    const cands = S.account ? [...tree.querySelectorAll('.tnode.s-progress, .tnode.s-open')].filter((el) => !el.closest('.titem.s-done')) : [];
+    cands.sort((x, y) => depth(y) - depth(x) || y.classList.contains('s-progress') - x.classList.contains('s-progress'));
+    const next = cands[0];
+    tree.querySelectorAll('.tree.root > li:not(.s-done) > details').forEach((d) => { d.open = true; });
+    if (next) {
+      next.classList.add('current');
+      next.querySelector('.title').insertAdjacentHTML('beforeend', ' <span class="pill warn">next up</span>');
+      for (let p = next.parentElement; p && p !== tree; p = p.parentElement) if (p.tagName === 'DETAILS') p.open = true;
+      next.querySelector('details').open = true;
+    }
+
+    const st = colStats(groups);
+    const nextA = next && S.ach.get(+next.dataset.id);
     $('#col-summary').innerHTML = S.account
       ? `<div class="focus-status">${bar(st.total ? st.done / st.total : 0)}
           <span>${st.done} / ${st.total} achievements done</span>
-          <span class="pill">${st.ap}/${st.apMax} AP</span> ${unlockedPill(entry)}</div>
-        ${nextA ? `<p class="next-up">▶ Next up: <a href="#" data-goto="${next}">${esc(nextA.name)}</a></p>`
+          <span class="pill">${st.ap}/${st.apMax} AP</span> ${unlockedPill(entry, weight)}</div>
+        ${nextA ? `<p class="next-up">▶ Next up: <a href="#" data-goto="${nextA.id}">${esc(nextA.name)}</a></p>`
           : st.total && st.done === st.total ? '<p class="ok-text">✔ All achievements of this collection are done.</p>'
             : st.total ? '<p class="muted">Everything left is still locked – expand a 🔒 step to see how to unlock it.</p>' : ''}`
       : `<div class="focus-status"><span class="pill">${st.total} achievements</span>
           <span class="muted"><a href="#/settings">Add an API key</a> to see where you stand.</span></div>`;
 
-    let n = 0;
-    const counter = () => ++n;
-    const tree = $('#col-tree');
-    tree.innerHTML = flat.length
-      ? `<h2>Achievements on the way</h2><ul class="tree root">${main.map(({ g, ids }) => groupHtml(g, ids, next, counter)).join('')}</ul>`
-      : `<h2>Achievements on the way</h2><p class="muted">No achievements found for this collection.
-          ${res.wikiError ? `The wiki could not be read (${esc(res.wikiError)}).` : 'It is probably unlocked through the story, crafting or a vendor – see “How to get it” below.'}</p>`;
-    if (rel.length) {
-      tree.insertAdjacentHTML('beforeend', `<h2>More related</h2><ul class="tree root">${rel.map(({ g, ids }) => groupHtml(g, ids, null, counter)).join('')}</ul>`);
-    }
-
     const acq = $('#col-acq');
     if (res.acquisition) {
       acq.hidden = false;
-      acq.open = !flat.length;
+      acq.open = !html;
       $('#col-acq-body').replaceChildren(Wiki.sanitize(S.wikiLang, res.acquisition)); // Cache-Inhalt erneut bereinigen
       bindAnchors(acq);
       Geo.load(S.wikiLang).then(() => tagChatKinds(acq)).catch(() => tagChatKinds(acq));
     }
-    $('#col-foot').innerHTML = entry.kind === 'category'
-      ? 'Source: GW2 API (achievement category and prerequisites).'
-      : `${res.wikiError && flat.length ? `⚠ The wiki could not be read (${esc(res.wikiError)}) – this list comes from the GW2 API only and may be incomplete.<br>` : ''}
+    const wikiBased = ['mount', 'legendary', 'set'].includes(entry.kind);
+    $('#col-foot').innerHTML = !wikiBased
+      ? 'Source: GW2 API (achievement rewards, categories and prerequisites).'
+      : `${res.wikiError && html ? `⚠ The wiki could not be read (${esc(res.wikiError)}) – this list comes from the GW2 API only and may be incomplete.<br>` : ''}
         Source: ${res.wikiTitle ? `wiki page <a href="${wikiRoute(S.wikiLang, res.wikiTitle)}">${esc(res.wikiTitle)}</a>, ` : ''}GW2 API rewards and prerequisites
         · built ${new Date(res.ts).toLocaleDateString()} · <button class="link" id="col-rebuild">↻ rebuild</button>`;
     const rebuild = $('#col-rebuild');
     if (rebuild) rebuild.onclick = () => showCollection(entry.key, true);
 
-    tree.addEventListener('toggle', (e) => {
-      const li = e.target.parentElement;
-      if (e.target.open && li?.classList.contains('tnode')) fillNode(li);
-    }, true);
-    tree.querySelectorAll('.tnode.current').forEach(fillNode);
+    if (!tree.dataset.bound) {
+      tree.dataset.bound = '1';
+      tree.addEventListener('toggle', (e) => {
+        const li = e.target.parentElement;
+        if (e.target.open && li?.classList.contains('tnode')) fillNode(li);
+      }, true);
+    }
+    if (next) fillNode(next);
     prefetchUnlocks(tree);
+  }
+
+  // Erfolge, nach denen das Wiki einen Erfolg freischaltet, als Äste darunter
+  function addUnlockKids(li, a) {
+    if (li.dataset.unlockKids) return;
+    const uh = S.wikiUnlock.get(a.id);
+    const ul = li.querySelector(':scope > details > ul.tkids');
+    if (!uh || !ul) return;
+    li.dataset.unlockKids = '1';
+    const seen = new Set();
+    const lazy = (x, d) => {
+      if (seen.has(x.id)) return '';
+      seen.add(x.id);
+      if (document.getElementById(`node-${x.id}`)) return refNode(x, null, d ? '↪ see above' : '↪ unlocks it – see above');
+      const kids = d < 3 ? directPrereqs(x).map((p) => lazy(S.ach.get(p), d + 1)).join('') : '';
+      return nodeLi(x, kids, '', d ? '' : 'unlocks it');
+    };
+    const html = (uh.achs || []).filter((x) => x.id !== a.id && !(a.prerequisites || []).includes(x.id)).map((x) => lazy(x, 0)).join('');
+    if (html) ul.insertAdjacentHTML('beforeend', html);
   }
 
   // Gesperrte Schritte ohne offene Voraussetzung: Freischalt-Hinweis aus dem Wiki gleich in der Zeile zeigen
@@ -650,7 +831,9 @@
     await pool(lis, 2, async (li) => {
       const a = S.ach.get(+li.dataset.id);
       const uh = await loadUnlockHint(a).catch(() => null);
-      if (token !== S.viewToken || stripTags(a.locked_text) || !uh?.text) return;
+      if (token !== S.viewToken || !uh) return;
+      addUnlockKids(li, a);
+      if (stripTags(a.locked_text) || !uh.text) return;
       const sub = li.querySelector('summary .sub');
       if (sub) sub.textContent = `🔒 ${truncate(uh.text.replace(/\s+/g, ' '), 180)}`;
     });
@@ -663,45 +846,33 @@
     }));
   }
 
-  function prereqLine(pa) {
-    const done = Progress.info(pa, S.progress.get(pa.id)).finished;
-    const inTree = document.getElementById(`node-${pa.id}`);
-    return `<div class="pre${done ? ' done' : ''}">${S.account ? (done ? '✔' : '○') : '•'} <a href="#/a/${pa.id}">${esc(pa.name)}</a> ${stateBadge(pa)}
-      ${inTree ? `<a href="#" class="sub" data-goto="${pa.id}">↑ show in this tree</a>` : ''}
-      ${!done && requirementOf(pa) ? `<div class="sub">${esc(requirementOf(pa))}</div>` : ''}</div>`;
-  }
-
-  // Inhalt eines aufgeklappten Knotens: Anforderung, Voraussetzungen, Freischalt-Weg, offene Schritte, Belohnung
+  // Inhalt eines aufgeklappten Knotens: Anforderung, Freischalt-Weg, offene Schritte, Belohnung
   async function fillNode(li) {
     if (li.dataset.filled) return;
     li.dataset.filled = '1';
     const a = S.ach.get(+li.dataset.id);
-    const body = li.querySelector('.tbody');
+    const body = li.querySelector(':scope > details > .tbody');
     if (!a || !body) return;
     const inf = Progress.info(a, S.progress.get(a.id));
     const state = nodeState(a);
     const bits = a.bits || [];
-    const pre = (a.prerequisites || []).map((id) => S.ach.get(id)).filter(Boolean);
-    const lockedish = state === 'locked' || (state === 'unknown' && ((a.flags || []).includes('RequiresUnlock') || pre.length));
+    const needsUnlock = (a.flags || []).includes('RequiresUnlock') && (state === 'locked' || state === 'unknown');
     const parts = [];
     const req = requirementOf(a);
     if (req) parts.push(`<p class="req">${esc(req)}</p>`);
     if (a.description) parts.push(`<p class="desc">${esc(stripTags(a.description))}</p>`);
-    if (pre.length) parts.push(`<div class="t-sec"><strong>Prerequisite${pre.length > 1 ? 's' : ''}:</strong>${pre.map(prereqLine).join('')}</div>`);
-    if (lockedish && ((a.flags || []).includes('RequiresUnlock') || inf.needsUnlock)) {
+    const open = openPrereqs(a);
+    if (S.account && open.length) parts.push(`<div class="t-sec"><strong>🔒 Needs first:</strong> ${open.map((x) => `<a href="#" data-goto="${x.id}">${esc(x.name)}</a>`).join(', ')} <span class="muted">(below)</span></div>`);
+    if (needsUnlock) {
       parts.push(`<div class="t-sec t-unlock"><strong>🔒 How to unlock it:</strong><div class="unlock-lines">${unlockLines(a).map((l) => `<div>${l}</div>`).join('')}
         <div class="muted wait">Checking the wiki…</div></div></div>`);
     }
     if (bits.length && !inf.finished) parts.push('<div class="t-sec t-bits"><span class="muted">Loading steps…</span></div>');
-    if (isMeta(a)) {
+    if (isMeta(a) && !li.querySelector('.tpick')) {
       const cat = S.catOf.get(a.id);
-      const others = categoryIds(cat).filter((id) => id !== a.id).map((id) => S.ach.get(id)).filter(Boolean);
-      const open = others.filter((o) => !Progress.info(o, S.progress.get(o.id)).finished);
       parts.push(`<div class="t-sec"><strong>Counts achievements in “${esc(cat.name)}”</strong>
         ${S.account ? `<span class="pill">${inf.current}/${inf.maxCount} done</span>` : ''}
-        <a class="sub" href="#/c/${encodeURIComponent(`cat:${cat.id}`)}">all of them as a tree ›</a>
-        <ul class="t-steps">${open.slice(0, 25).map((o) => `<li><a href="#/a/${o.id}">${esc(o.name)}</a> ${stateBadge(o)}</li>`).join('')}</ul>
-        ${open.length > 25 ? `<div class="muted">+ ${open.length - 25} more</div>` : ''}</div>`);
+        <a class="sub" href="#/c/${encodeURIComponent(`cat:${cat.id}`)}">all of them as a tree ›</a></div>`);
     }
     parts.push('<div class="t-rewards"></div>');
     parts.push(`<div class="t-actions"><a class="btn" href="#/a/${a.id}">Open run-through ›</a>
@@ -716,16 +887,17 @@
         if (!out) return;
         const doneCount = bits.filter((_, i) => inf.bitsDone.has(i)).length;
         const needed = inf.maxCount && inf.maxCount < bits.length ? inf.maxCount : bits.length;
-        const open = names.filter((_, i) => !inf.bitsDone.has(i));
+        const openBits = names.filter((_, i) => !inf.bitsDone.has(i));
         out.innerHTML = `<strong>Steps:</strong> ${S.account ? `${doneCount}/${needed} done` : `${needed}`}${needed < bits.length ? ` <span class="muted">(any ${needed} of ${bits.length})</span>` : ''}
-          <ul class="t-steps">${open.slice(0, 12).map((x) => `<li>${x.icon ? `<img class="mini" src="${esc(x.icon)}" alt="">` : ''}<span class="${x.rarity ? `r-${esc(x.rarity)}` : ''}">${esc(x.label)}</span></li>`).join('')}</ul>
-          ${open.length > 12 ? `<div class="muted">+ ${open.length - 12} more – see the run-through</div>` : ''}`;
+          <ul class="t-steps">${openBits.slice(0, 12).map((x) => `<li>${x.icon ? `<img class="mini" src="${esc(x.icon)}" alt="">` : ''}<span class="${x.rarity ? `r-${esc(x.rarity)}` : ''}">${esc(x.label)}</span></li>`).join('')}</ul>
+          ${openBits.length > 12 ? `<div class="muted">+ ${openBits.length - 12} more – see the run-through</div>` : ''}`;
       });
     }
     const unlock = body.querySelector('.unlock-lines');
     if (unlock) {
       loadUnlockHint(a).then(() => true, () => false).then((ok) => {
         if (!unlock.isConnected) return;
+        addUnlockKids(li, a);
         const lines = unlockLines(a);
         const none = ok ? 'Not stated on the wiki page – open the run-through for the full wiki guide.' : 'The wiki could not be read – try again later.';
         unlock.innerHTML = (lines.length ? lines : [none]).map((l) => `<div>${l}</div>`).join('');
@@ -733,7 +905,7 @@
     }
   }
 
-  // „Next up“ / „in this tree“: Knoten aufklappen und hinscrollen
+  // „Next up“ / Verweise: Knoten aufklappen und hinscrollen
   function gotoNode(id) {
     const li = document.getElementById(`node-${id}`);
     if (!li) { location.hash = `#/a/${id}`; return; }

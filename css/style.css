@@ -246,7 +246,7 @@ h3.res-head { font-size: .85rem; text-transform: uppercase; letter-spacing: .06e
 .list.collections .row:hover { border-color: var(--accent); }
 .pill.kind { font-size: .75rem; font-weight: 500; vertical-align: 2px; margin-left: .3rem; }
 .pill.k-mount { border-color: var(--accent); color: var(--accent-2); }
-.pill.k-legendary { border-color: #c78eff; color: #c78eff; }
+.pill.k-legendary, .pill.k-set { border-color: #c78eff; color: #c78eff; }
 .col-link { margin: .1rem 0 .4rem; }
 
 /* Sammlungen: Baum */
@@ -261,27 +261,42 @@ ul.tree details { margin: 0; }
 .tgroup > details > summary .sub { margin-left: 0; }
 .tgroup.all-done > details > summary strong { color: var(--ok); }
 .t-ico { width: 1.4rem; text-align: center; }
-.tnode > details > summary {
+.tnode > details > summary, .titem > details > summary {
   display: flex; gap: .55rem; align-items: center; padding: .4rem .6rem; color: var(--text);
   border: 1px solid var(--line); border-radius: 8px; background: var(--panel); list-style: none;
 }
-.tnode > details > summary::-webkit-details-marker { display: none; }
-.tnode > details > summary:hover { border-color: var(--accent); }
+.tnode > details > summary::-webkit-details-marker, .titem > details > summary::-webkit-details-marker { display: none; }
+.tnode > details > summary:hover, .titem > details > summary:hover { border-color: var(--accent); }
 .tnode > details[open] > summary { border-bottom-left-radius: 0; border-bottom-right-radius: 0; }
-.tnode .icon { width: 30px; height: 30px; }
-.tnode .title { font-weight: 600; }
-.tnode summary .sub { margin-left: 0; display: block; }
+.tnode .icon, .titem .icon, .troot .icon { width: 30px; height: 30px; }
+.tnode .title, .titem .title { font-weight: 600; }
+.tnode summary .sub, .titem summary .sub { margin-left: 0; display: block; }
 .tnode summary .bar { max-width: 240px; margin: .25rem 0 0; }
-.tnode .st { width: 1.3rem; flex: none; text-align: center; font-weight: 700; }
-.tnode .num { flex: none; min-width: 1.5rem; height: 1.5rem; line-height: 1.5rem; text-align: center; border-radius: 999px; background: var(--panel-2); border: 1px solid var(--line); font-size: .8rem; color: var(--muted); }
-.tnode.s-done .st { color: var(--ok); }
+.st { width: 1.3rem; flex: none; text-align: center; font-weight: 700; }
+.s-done > .st, .s-done > details > summary > .st { color: var(--ok); }
+.s-progress > details > summary > .st { color: var(--accent-2); }
+.titem > details > summary { border-color: #c78eff66; }
+.titem.s-done > details > summary { opacity: .6; }
+.tgroup.s-done > details > summary { opacity: .7; }
+ul.tree:empty { display: none; }
+.pill.step { font-size: .72rem; border-color: var(--accent); color: var(--accent-2); vertical-align: 1px; }
+.troot { display: flex; align-items: center; gap: .5rem; flex-wrap: wrap; font-size: 1.05rem; margin: .4rem 0 .1rem; }
+.tref { display: flex; align-items: center; gap: .45rem; flex-wrap: wrap; padding: .25rem .6rem; border: 1px dashed var(--line); border-radius: 8px; font-size: .92rem; }
+.tref .sub { margin-left: 0; }
+.tref.s-done { opacity: .6; }
+.tleaf { display: flex; align-items: center; gap: .35rem; padding: .15rem 0; }
+.tleaf.s-done { opacity: .6; }
+.tpick > details > summary { display: flex; flex-wrap: wrap; align-items: center; gap: .5rem; padding: .3rem .2rem; color: var(--text); }
+.tpick > details > summary .sub { margin-left: 0; }
+.seg { display: inline-flex; border: 1px solid var(--line); border-radius: 8px; overflow: hidden; margin: .2rem 0 .5rem; }
+.seg button { background: var(--panel-2); color: var(--text); border: none; border-radius: 0; padding: .3rem .9rem; font-weight: 500; }
+.seg button.on { background: var(--accent); color: #1a1406; font-weight: 700; }
 .tnode.s-done > details > summary { opacity: .6; }
-.tnode.s-progress .st { color: var(--accent-2); }
 .tnode.s-locked > details > summary { border-style: dashed; }
 .tnode.s-locked .title { color: var(--muted); }
 .tnode.current > details > summary { border-color: var(--accent); background: #d9a44118; }
 .tnode.flash > details > summary { box-shadow: 0 0 0 2px var(--accent-2); }
-.tbody { padding: .6rem .9rem .8rem; border: 1px solid var(--line); border-top: none; border-radius: 0 0 8px 8px; background: var(--panel-2); }
+.tbody { padding: .6rem .9rem .8rem; border: 1px solid var(--line); border-top: none; border-radius: 0 0 8px 8px; background: var(--panel-2); margin-bottom: .3rem; }
 .tbody .req { margin: 0 0 .3rem; }
 .tbody .desc { font-style: italic; color: #cfc9b8; margin: 0 0 .5rem; font-size: .9rem; }
 .t-sec { margin: .5rem 0; }
@@ -299,5 +314,4 @@ ul.t-steps li { margin: .1rem 0; }
 @media (max-width: 640px) {
   ul.tree { margin-left: .3rem; padding-left: .7rem; }
   ul.tree > li::before { left: -.7rem; width: .55rem; }
-  .tnode .num { display: none; }
 }

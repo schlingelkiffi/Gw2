@@ -1,15 +1,17 @@
-// Sammlungen: Reittiere und legendäre Gegenstände mit allen Erfolgen auf dem Weg dorthin.
-// Der Katalog kommt aus der API (/v2/mounts, /v2/legendaryarmory). Welche Erfolge dazugehören, steht auf
-// der Wiki-Seite: verlinkte Erfolgskategorien und Erfolge sowie Bauteile (z. B. „Gift of the Hylek“),
-// die ein Erfolg als Belohnung gibt. Dazu kommen die Voraussetzungen aus der API.
+// Sammlungen: Reittiere, legendäre Gegenstände/Rüstungssets und alles, was ein Erfolg als Belohnung gibt –
+// jeweils mit den Erfolgen auf dem Weg dorthin.
+// Der Katalog kommt aus der API (/v2/mounts, /v2/legendaryarmory, Erfolgs-Belohnungen). Welche Erfolge zu einem
+// Reittier oder einer Legendären gehören, steht auf der Wiki-Seite: verlinkte Erfolgskategorien und Erfolge sowie
+// Bauteile (z. B. „Gift of the Hylek“), die ein Erfolg als Belohnung gibt. Dazu kommen die Voraussetzungen aus der API.
 const Collections = (() => {
-  const VERSION = 1;
+  const VERSION = 2;
   const MAX_AGE = 7 * 24 * 3600 * 1000;
   const PAGE_BUDGET = 16; // höchstens so viele Bauteil-Seiten pro Sammlung nachladen
+  const MAX_REWARDERS = 3; // Items, die mehr Erfolge geben, sind allgemeine Belohnungen (Truhen, Materialien)
   const norm = (s) => String(s || '').toLowerCase().normalize('NFD').replace(/[̀-ͯ]/g, '').replace(/\s+/g, ' ').trim();
-  const stripTags = (s) => String(s || '').replace(/<[^>]*>/g, '');
   const escRe = (s) => s.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
   const catIds = (c) => (c?.achievements || []).map((e) => (typeof e === 'object' ? e.id : e));
+  const periodic = (a) => (a.flags || []).some((f) => ['Daily', 'Weekly', 'Monthly', 'Repeatable'].includes(f));
 
   // Wiki-Abschnitte, deren Links die Erfolge liefern bzw. die nichts damit zu tun haben
   const ACQ = /acquisition|obtain|unlock|getting|crafting|recipe|collection|achievement|walkthrough|erwerb|freischalt|herstellung|rezept|sammlung|erfolg/i;
@@ -19,8 +21,9 @@ const Collections = (() => {
     mount: /^(mounts?|reittiere?|montures?|monturas?)$/,
     legendary: /^(legendar(y|ies)?|legys?|leggys?|legies|legendar[ea]?|legendaires?|legendari[oa]s?)$/,
   };
+  const KIND_ORDER = { mount: 0, legendary: 1, set: 1, reward: 2, title: 3 };
 
-  // ---------- Katalog ----------
+  // ---------- Katalog: Reittiere, Legendäre, Rüstungssets ----------
   let catalog = null;
   let catalogKey = '';
   let loadingCat = null;
@@ -35,13 +38,43 @@ const Collections = (() => {
   }
 
   // Namen je Sprache zusammenführen: { id -> { lang: name } }
-  function namesByLang(langs, lists, idOf = (x) => x.id) {
+  function namesByLang(langs, lists) {
     const out = new Map();
     lists.forEach((list, i) => (list || []).forEach((x) => {
-      const n = out.get(idOf(x)) || {};
+      const n = out.get(x.id) || {};
       n[langs[i]] = x.name;
-      out.set(idOf(x), n);
+      out.set(x.id, n);
     }));
+    return out;
+  }
+
+  // Gemeinsamer Namensanfang der Teile eines Sets („Perfected Envoy Helmet/Mask/Cowl“ -> „Perfected Envoy“)
+  function commonPrefix(names) {
+    if (!names.length) return '';
+    let p = names[0];
+    for (const n of names) while (p && !n.startsWith(p)) p = p.slice(0, -1);
+    if (names.some((n) => n.length > p.length && /[\p{L}\p{N}]/u.test(n[p.length]) && /[\p{L}\p{N}]$/u.test(p))) p = p.replace(/[\p{L}\p{N}'’]+$/u, '');
+    return p.replace(/[\s\-–:'’]+$/u, '').trim();
+  }
+
+  // Legendäre Rüstung: Teile nach Set gruppieren (englischer Name ohne letztes Wort)
+  function groupArmor(items, names, langs) {
+    const sets = new Map();
+    for (const it of items) {
+      if (it.type !== 'Armor') continue;
+      const en = names.get(it.id)?.en || it.name;
+      const k = norm(en.split(' ').slice(0, -1).join(' '));
+      if (!k) continue;
+      (sets.get(k) || sets.set(k, []).get(k)).push(it);
+    }
+    const out = [];
+    for (const [k, list] of sets) {
+      if (list.length < 2) continue;
+      const setNames = {};
+      for (const lang of langs) setNames[lang] = commonPrefix(list.map((it) => names.get(it.id)?.[lang] || it.name)) || list[0].name;
+      const pieces = list.map((it) => ({ id: it.id, weight: it.details?.weight_class || 'Other', slot: it.details?.type || '', names: names.get(it.id), icon: it.icon }));
+      out.push({ key: `set:${k.replace(/[^a-z0-9]+/g, '-')}`, kind: 'set', names: setNames, icon: list[0].icon, sub: 'Legendary armor set', pieces });
+    }
     return out;
   }
 
@@ -60,7 +93,11 @@ const Collections = (() => {
       const ids = await GW2.get('/legendaryarmory');
       const lists = await Promise.all(langs.map((lang) => GW2.getMany('/items', ids, { lang })));
       const names = namesByLang(langs, lists);
+      const sets = groupArmor(lists[0], names, langs);
+      const inSet = new Set(sets.flatMap((s) => s.pieces.map((p) => p.id)));
+      entries.push(...sets);
       for (const it of lists[0]) {
+        if (inSet.has(it.id)) continue; // Rüstungsteile stecken im Set
         entries.push({ key: `item:${it.id}`, kind: 'legendary', itemId: it.id, names: names.get(it.id), icon: it.icon, sub: legendarySub(it), type: it.type });
       }
     } catch (e) { console.warn('Legendäre', e); }
@@ -89,16 +126,84 @@ const Collections = (() => {
     return promise;
   }
 
-  const nameOf = (e, lang) => e.names?.[lang] || e.names?.en || Object.values(e.names || {})[0] || e.key;
-  const entry = (key) => catalog?.find((e) => e.key === key) || null;
+  // ---------- Katalog: alles, was ein Erfolg als Belohnung gibt (Items, Titel) ----------
+  let rewardEntries = [];
+  let rewardKey = '';
+  let loadingRewards = null;
 
-  // Suchtreffer im Katalog: ganzer Name, Namensanfang oder Wortanfang; „legendary“/„mount“ zeigt alle
+  // Belohnungen der einmaligen Erfolge: Item-/Titel-ID -> Erfolge
+  function rewardMaps(ach) {
+    const items = new Map();
+    const titles = new Map();
+    for (const a of ach.values()) {
+      if (periodic(a)) continue;
+      for (const r of a.rewards || []) {
+        const m = r.type === 'Item' ? items : r.type === 'Title' ? titles : null;
+        if (m) (m.get(r.id) || m.set(r.id, []).get(r.id)).push(a.id);
+      }
+    }
+    return { items, titles };
+  }
+
+  function loadRewards(ctx, langs) {
+    langs = [...new Set(langs)];
+    const key = langs.join(',');
+    if (rewardKey === key) return Promise.resolve(rewardEntries);
+    if (loadingRewards?.key === key) return loadingRewards.promise;
+    const promise = (async () => {
+      const { items, titles } = rewardMaps(ctx.ach);
+      const itemIds = [...items].filter(([, achs]) => achs.length <= MAX_REWARDERS).map(([id]) => id);
+      const titleIds = [...titles.keys()];
+      const [itemNames, titleNames] = await Promise.all([
+        Promise.all(langs.map((l) => GW2.resolve('Item', itemIds, l).catch(() => ({})))),
+        Promise.all(langs.map((l) => GW2.resolve('Title', titleIds, l).catch(() => ({})))),
+      ]);
+      const out = [];
+      const namesOf = (perLang, id) => {
+        const n = {};
+        langs.forEach((l, i) => { if (perLang[i][id]?.name) n[l] = perLang[i][id].name; });
+        return n;
+      };
+      for (const id of itemIds) {
+        const it = itemNames[0][id];
+        if (!it?.name || it.type === 'CraftingMaterial') continue;
+        const achIds = items.get(id);
+        out.push({ key: `item:${id}`, kind: 'reward', itemId: id, names: namesOf(itemNames, id), icon: it.icon, rarity: it.rarity,
+          sub: `Reward from ${achIds.length === 1 ? 'an achievement' : `${achIds.length} achievements`}`, achIds });
+      }
+      for (const id of titleIds) {
+        const names = namesOf(titleNames, id);
+        if (!Object.keys(names).length) continue;
+        const achIds = titles.get(id);
+        const icon = ctx.ach.get(achIds[0])?.icon || ctx.catOf.get(achIds[0])?.icon || null;
+        out.push({ key: `title:${id}`, kind: 'title', titleId: id, names, icon,
+          sub: `Title from ${achIds.length === 1 ? 'an achievement' : `${achIds.length} achievements`}`, achIds });
+      }
+      rewardEntries = out;
+      rewardKey = key;
+      return out;
+    })();
+    loadingRewards = { key, promise };
+    promise.catch(() => { loadingRewards = null; });
+    return promise;
+  }
+
+  const nameOf = (e, lang) => e.names?.[lang] || e.names?.en || Object.values(e.names || {})[0] || e.key;
+  // Katalog vor Belohnungen (gleiche Item-ID: der Legendären-Eintrag gewinnt)
+  const entry = (key) => catalog?.find((e) => e.key === key) || rewardEntries.find((e) => e.key === key) || null;
+
+  // Suchtreffer: ganzer Name, Namensanfang oder Wortanfang; „legendary“/„mount“ zeigt alle dieser Art
   function match(q) {
     const nq = norm(q);
-    if (!catalog || nq.length < 3) return [];
-    for (const [kind, re] of Object.entries(KIND_WORDS)) if (re.test(nq)) return catalog.filter((e) => e.kind === kind);
+    if (nq.length < 3) return [];
+    const all = [...(catalog || [])];
+    const seen = new Set(all.map((e) => e.key));
+    for (const e of all) for (const piece of e.pieces || []) seen.add(`item:${piece.id}`); // Rüstungsteile stecken im Set
+    for (const e of rewardEntries) if (!seen.has(e.key)) all.push(e);
+    if (KIND_WORDS.mount.test(nq)) return all.filter((e) => e.kind === 'mount');
+    if (KIND_WORDS.legendary.test(nq)) return all.filter((e) => e.kind === 'legendary' || e.kind === 'set');
     const hits = [];
-    for (const e of catalog) {
+    for (const e of all) {
       let best = -1;
       for (const n of Object.values(e.names || {})) {
         const nn = norm(n);
@@ -106,15 +211,14 @@ const Collections = (() => {
       }
       if (best >= 0) hits.push([best, e]);
     }
-    hits.sort((x, y) => y[0] - x[0] || (x[1].kind === 'mount' ? -1 : 0) - (y[1].kind === 'mount' ? -1 : 0)
-      || nameOf(x[1], 'en').localeCompare(nameOf(y[1], 'en')));
+    hits.sort((x, y) => y[0] - x[0] || KIND_ORDER[x[1].kind] - KIND_ORDER[y[1].kind] || nameOf(x[1], 'en').localeCompare(nameOf(y[1], 'en')));
     return hits.map((h) => h[1]);
   }
 
   // Katalog-Eintrag zu einem Wiki-Titel („Skyscale“, „Endless Summer (item)“)
   function byTitle(title) {
     const t = norm(String(title).replace(/#.*$/, '').replace(/\s*\([^)]*\)\s*$/, ''));
-    return catalog?.find((e) => Object.values(e.names || {}).some((n) => norm(n) === t)) || null;
+    return catalog?.find((e) => e.kind !== 'set' && Object.values(e.names || {}).some((n) => norm(n) === t)) || null;
   }
 
   // ---------- Indizes ----------
@@ -137,28 +241,23 @@ const Collections = (() => {
     return idx;
   }
 
-  // Belohnungs-Items: Name -> Erfolge, die das Item geben (nur einmalige Erfolge)
+  // Belohnungs-Items in der Wiki-Sprache: Name -> { itemId, achIds }
   const rewardIdx = new Map();
   function rewardsFor(ctx) {
     const lang = ctx.wikiLang;
     if (!rewardIdx.has(lang)) {
       const promise = (async () => {
-        const byItem = new Map();
-        for (const a of ctx.ach.values()) {
-          if ((a.flags || []).some((f) => ['Daily', 'Weekly', 'Monthly', 'Repeatable'].includes(f))) continue;
-          for (const r of a.rewards || []) {
-            if (r.type === 'Item') (byItem.get(r.id) || byItem.set(r.id, []).get(r.id)).push(a.id);
-          }
-        }
-        const names = await GW2.resolve('Item', [...byItem.keys()], lang).catch(() => ({}));
+        const { items } = rewardMaps(ctx.ach);
+        const names = await GW2.resolve('Item', [...items.keys()], lang).catch(() => ({}));
         const byName = new Map();
-        for (const [id, achs] of byItem) {
+        for (const [id, achs] of items) {
           const n = names[id]?.name;
           if (!n) continue;
           const k = norm(n);
-          byName.set(k, [...new Set([...(byName.get(k) || []), ...achs])]);
+          const prev = byName.get(k);
+          byName.set(k, { itemId: prev ? prev.itemId : id, achIds: [...new Set([...(prev?.achIds || []), ...achs])] });
         }
-        return { byItem, byName };
+        return { byItem: items, byName };
       })();
       rewardIdx.set(lang, promise);
       promise.catch(() => rewardIdx.delete(lang));
@@ -166,7 +265,7 @@ const Collections = (() => {
     return rewardIdx.get(lang);
   }
 
-  function reset() { nameIdx.clear(); rewardIdx.clear(); memo.clear(); }
+  function reset() { nameIdx.clear(); rewardIdx.clear(); memo.clear(); rewardKey = ''; rewardEntries = []; }
 
   // ---------- Wiki-Seite zerlegen ----------
   // Inhalt in Abschnitte mit Überschriften-Kette teilen (h3 unter „Acquisition“ gehört dazu)
@@ -209,8 +308,8 @@ const Collections = (() => {
   // Ein Bauteil, das genau ein oder zwei Erfolge als Belohnung geben (häufige Materialien zählen nicht)
   function rewardMatch(rw, keys) {
     for (const k of keys) {
-      const ids = rw.byName.get(k);
-      if (ids && ids.length <= 2) return ids;
+      const r = rw.byName.get(k);
+      if (r && r.achIds.length <= 2) return r;
     }
     return null;
   }
@@ -241,7 +340,7 @@ const Collections = (() => {
     for (const t of links) {
       const keys = titleKeys(t);
       const r = rewardMatch(rw, keys);
-      if (r) { ids.push(...r); continue; }
+      if (r) { ids.push(...r.achIds); continue; }
       const k = keys.find((x) => idx.ach.has(x));
       if (k) achLinks.push(idx.ach.get(k));
       else if (GIFT.test(t) && norm(t) !== norm(page.title)) deeper.push(t);
@@ -255,32 +354,41 @@ const Collections = (() => {
   }
 
   // ---------- Erfolge einer Sammlung bestimmen ----------
-  // Ergebnis: Gruppen { kind: category|achievements|component|related, title, ids, catId?, related? }
+  // Ergebnis: Gruppen { kind: category|achievements|component|prereq, title, ids, catId?, itemId? }.
+  // sequential: die Gruppen sind aufeinanderfolgende Schritte (Reittier-Sammlungen).
   async function build(entry, ctx) {
     const status = ctx.onStatus || (() => {});
     const catById = new Map(ctx.categories.map((c) => [c.id, c]));
     const groups = [];
     const placed = new Set();
     const place = (ids) => ids.filter((id) => ctx.ach.has(id) && !placed.has(id) && placed.add(id));
-    const addCategory = (cat, pos, related = false) => {
+    const addCategory = (cat, pos) => {
       const ids = cat ? place(catIds(cat)) : [];
-      if (ids.length) groups.push({ kind: 'category', title: cat.name, catId: cat.id, ids, pos, related });
+      if (ids.length) groups.push({ kind: 'category', title: cat.name, catId: cat.id, ids, pos });
     };
+    const rewarding = (itemId) => [...ctx.ach.values()].filter((a) => !periodic(a) && (a.rewards || []).some((r) => r.type === 'Item' && r.id === itemId)).map((a) => a.id);
 
     const name = entry.kind === 'category' ? catById.get(entry.catId)?.name : nameOf(entry, ctx.lang);
     let wikiTitle = null;
     let wikiError = null;
     let acquisition = null;
+    let fromWiki = false;
 
     if (entry.kind === 'category') {
       addCategory(catById.get(entry.catId), 0);
+    } else if (entry.kind === 'reward' || entry.kind === 'title') {
+      // Belohnung: die Erfolge, die sie geben (und deren Voraussetzungen)
+      const ids = place(entry.achIds || []);
+      if (ids.length) groups.push({ kind: entry.kind === 'reward' ? 'component' : 'achievements', title: name, itemId: entry.itemId, ids, pos: 0 });
     } else {
       try {
         status('Reading the wiki page…');
         const wikiName = nameOf(entry, ctx.wikiLang);
-        const title = await Wiki.findPage(ctx.wikiLang, {
-          id: entry.itemId, name: wikiName, context: entry.kind === 'mount' ? 'Mount' : 'Item', preferId: entry.kind === 'legendary',
-        });
+        const title = entry.kind === 'set'
+          ? await Wiki.findPage(ctx.wikiLang, { name: `${wikiName} ${ctx.wikiLang === 'de' ? 'Rüstung' : 'armor'}` })
+          : await Wiki.findPage(ctx.wikiLang, {
+            id: entry.itemId, name: wikiName, context: entry.kind === 'mount' ? 'Mount' : 'Item', preferId: entry.kind === 'legendary',
+          });
         if (!title) throw new Error('no wiki page found');
         const page = await Wiki.parse(ctx.wikiLang, title);
         wikiTitle = page.title;
@@ -311,12 +419,12 @@ const Collections = (() => {
         if (direct.length) groups.push({ kind: 'achievements', title: 'Achievements', ids: direct.map((f) => f.ach), pos: direct[0].pos });
         for (const f of found) {
           if (!f.reward) continue;
-          const ids = place(f.reward);
-          if (ids.length) groups.push({ kind: 'component', title: f.t, ids, pos: f.pos });
+          const ids = place(f.reward.achIds);
+          if (ids.length) groups.push({ kind: 'component', title: f.t, itemId: f.reward.itemId, ids, pos: f.pos });
         }
 
         // Legendäre: Bauteile ohne direkten Treffer auf ihrer eigenen Seite weiterverfolgen
-        if (entry.kind === 'legendary') {
+        if (entry.kind === 'legendary' || entry.kind === 'set') {
           const cands = found.filter((f) => !f.cat && !f.ach && !f.reward && !/^(mystic forge|trading post|mystische schmiede|handelsposten)$/i.test(f.t))
             .sort((x, y) => (GIFT.test(y.t) - GIFT.test(x.t)) || x.pos - y.pos)
             .slice(0, 10);
@@ -333,41 +441,33 @@ const Collections = (() => {
         console.warn('Sammlung (Wiki)', e);
       }
 
-      // API: Erfolge, die den Gegenstand selbst als Belohnung geben
-      if (entry.itemId) {
-        const ids = place([...ctx.ach.values()].filter((a) => (a.rewards || []).some((r) => r.type === 'Item' && r.id === entry.itemId)).map((a) => a.id));
-        if (ids.length) groups.push({ kind: 'component', title: name, ids, pos: 9000 });
-      }
-    }
+      // API: Erfolge, die den Gegenstand (bzw. ein Teil des Sets) selbst als Belohnung geben
+      const own = entry.kind === 'set' ? entry.pieces.map((p) => ({ id: p.id, title: nameOf(p, ctx.lang) })) : entry.itemId ? [{ id: entry.itemId, title: name }] : [];
+      own.forEach((o, i) => {
+        const ids = place(rewarding(o.id));
+        if (ids.length) groups.push({ kind: 'component', title: o.title, itemId: o.id, ids, pos: 9000 + i });
+      });
 
-    // API: Kategorien und Erfolge mit dem Namen im Titel (Wortanfang: „skyscale“ passt auf „Raising Skyscales“)
-    const nq = norm(name);
-    if (entry.kind !== 'category' && nq.length >= 3) {
-      const re = new RegExp(`(^|[^a-z0-9])${escRe(nq)}`);
-      const hadMain = groups.length > 0;
-      ctx.categories.filter((c) => re.test(norm(c.name)) && catIds(c).length)
-        .sort((x, y) => (x.order ?? 0) - (y.order ?? 0))
-        .forEach((c, i) => addCategory(c, 10000 + i, hadMain));
+      fromWiki = groups.length > 0;
+      const nq = norm(name);
       // Legendäre: „Name I/II/III“, „Name: …“ bzw. „Legendary …: Name“ gehören zum Weg
-      if (entry.kind === 'legendary') {
+      if (entry.kind === 'legendary' && nq.length >= 3) {
         const strict = new RegExp(`^([a-z ]+: )?${escRe(nq)}( [ivx]+)?(:.*)?$`);
         const ids = place([...ctx.ach.values()].filter((a) => ctx.catOf.has(a.id) && strict.test(norm(a.name))).map((a) => a.id));
         if (ids.length) groups.push({ kind: 'achievements', title: 'Achievements', ids, pos: 11000 });
       }
-      // Weitere Erfolge, die den Namen nennen (eingeklappt): Titel, Beschreibung, Anforderung
-      if (nq.length >= 6 || nq.includes(' ')) {
-        const ids = place([...ctx.ach.values()].filter((a) => {
-          if (!ctx.catOf.has(a.id) || (a.flags || []).some((f) => ['Daily', 'Weekly', 'Monthly'].includes(f))) return false;
-          return re.test(norm(`${a.name} ${stripTags(a.description)} ${stripTags(a.requirement)}`));
-        }).map((a) => a.id)).slice(0, 80);
-        if (ids.length) groups.push({ kind: 'related', title: name, ids, pos: 20000, related: true });
+      // Nur wenn das Wiki nichts geliefert hat: Kategorien mit dem Namen (Wortanfang: „skyscale“ -> „Raising Skyscales“)
+      if (!groups.length && entry.kind === 'mount' && nq.length >= 3) {
+        const re = new RegExp(`(^|[^a-z0-9])${escRe(nq)}`);
+        ctx.categories.filter((c) => re.test(norm(c.name)) && catIds(c).length)
+          .sort((x, y) => (x.order ?? 0) - (y.order ?? 0))
+          .forEach((c, i) => addCategory(c, 10000 + i));
       }
     }
 
-    // Reihenfolge: Hauptgruppen nach Auftreten auf der Wiki-Seite, verwandte Gruppen ans Ende
-    groups.sort((x, y) => (!!x.related - !!y.related) || x.pos - y.pos);
+    groups.sort((x, y) => x.pos - y.pos);
     // Voraussetzungen (rekursiv) in die Gruppe des Erfolgs, der sie braucht.
-    // Kategorie: Vor-Erfolge aus anderen Kategorien als eigene Gruppe davor (zählen nicht zur Kategorie).
+    // Kategorie: Vor-Erfolge aus anderen Kategorien als eigene Gruppe (zählen nicht zur Kategorie).
     const before = [];
     for (const g of groups) {
       const pre = [];
@@ -388,33 +488,34 @@ const Collections = (() => {
 
     return {
       v: VERSION, ts: Date.now(), key: entry.key, name, wikiTitle, wikiError, acquisition,
-      groups: groups.map(({ kind, title, catId, ids, related, extra, via }) => ({ kind, title, catId, ids, related: !!related, extra: !!extra, via: !!via })),
+      sequential: entry.kind === 'mount' && fromWiki, // Schrittfolge nur, wenn die Reihenfolge von der Wiki-Seite stammt
+      groups: groups.map(({ kind, title, catId, itemId, ids, extra, via }) => ({ kind, title, catId, itemId, ids, extra: !!extra, via: !!via })),
     };
   }
 
   const memo = new Map();
   const cacheKey = (entry, ctx) => `collection-${VERSION}-${entry.key}-${ctx.lang}-${ctx.wikiLang}`;
+  const usesWiki = (entry) => ['mount', 'legendary', 'set'].includes(entry.kind);
 
   // Zwischengespeichertes Ergebnis (Sitzung oder IndexedDB), ohne neu aufzubauen
   async function cached(entry, ctx) {
+    if (!usesWiki(entry)) return build(entry, ctx); // ohne Wiki: sofort aus den API-Daten
     const k = cacheKey(entry, ctx);
     if (memo.has(k)) return memo.get(k);
     const c = await DB.get(k);
     if (c && c.v === VERSION && Date.now() - c.ts < MAX_AGE) { memo.set(k, c); return c; }
     return null;
   }
-  const peek = (entry, ctx) => memo.get(cacheKey(entry, ctx)) || null;
 
   async function resolve(entry, ctx, { force = false } = {}) {
-    if (!force && entry.kind !== 'category') {
+    if (!usesWiki(entry)) return build(entry, ctx);
+    if (!force) {
       const c = await cached(entry, ctx);
       if (c) return c;
     }
     const res = await build(entry, ctx);
-    if (entry.kind !== 'category') {
-      memo.set(cacheKey(entry, ctx), res);
-      if (!res.wikiError) DB.set(cacheKey(entry, ctx), res); // ohne Wiki nur für diese Sitzung
-    }
+    memo.set(cacheKey(entry, ctx), res);
+    if (!res.wikiError) DB.set(cacheKey(entry, ctx), res); // ohne Wiki nur für diese Sitzung
     return res;
   }
 
@@ -431,5 +532,8 @@ const Collections = (() => {
     return out;
   }
 
-  return { loadCatalog, match, entry, byTitle, nameOf, resolve, cached, peek, reset, accountUnlocks, get catalog() { return catalog || []; } };
+  return {
+    loadCatalog, loadRewards, match, entry, byTitle, nameOf, resolve, cached, reset, accountUnlocks,
+    get catalog() { return catalog || []; },
+  };
 })();
